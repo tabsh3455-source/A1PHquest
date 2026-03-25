@@ -4,8 +4,12 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  backend-quality:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -16,12 +20,139 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install -r apps/api/requirements.txt
+          pip install bandit pip-audit
 
-      - name: Run tests
+      - name: Run backend tests
         run: pytest -q
 
+      - name: Run Bandit
+        run: bandit -r apps/api/app -q
+
+      - name: Run pip-audit
+        run: pip-audit -r apps/api/requirements.txt
+
+  frontend-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run npm audit
+        run: npm audit --omit=dev
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    needs:
+      - backend-quality
+      - frontend-quality
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install smoke test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests urllib3
+
+      - name: Prepare CI environment
+        shell: bash
+        run: |
+          cp .env.template .env
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path(".env")
+          values = {}
+          for raw_line in path.read_text(encoding="utf-8").splitlines():
+              line = raw_line.strip()
+              if not line or line.startswith("#") or "=" not in line:
+                  continue
+              key, value = line.split("=", 1)
+              values[key] = value
+
+          overrides = {
+              "JWT_SECRET": "ci-jwt-secret-0123456789-abcdefghijklmnopqrstuvwxyz",
+              "BOOTSTRAP_ADMIN_PASSWORD": "CiBootstrapPass123!",
+              "SUPERVISOR_SHARED_TOKEN": "ci-supervisor-shared-token-abcdefghijklmnopqrstuvwxyz",
+              "POSTGRES_PASSWORD": "ci-postgres-password-abcdefghijklmnopqrstuvwxyz",
+              "AES_MASTER_KEY": "0123456789abcdef0123456789abcdef",
+              "DATABASE_URL": "postgresql+psycopg2://a1phquest:ci-postgres-password-abcdefghijklmnopqrstuvwxyz@postgres:5432/a1phquest",
+              "A1PHQUEST_HTTP_PORT": "8080",
+              "A1PHQUEST_HTTPS_PORT": "8443",
+              "ENVIRONMENT": "ci",
+          }
+          values.update(overrides)
+          path.write_text(
+              "\n".join(f"{key}={value}" for key, value in values.items()) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          chmod +x deploy/nginx/generate-self-signed-cert.sh
+          bash deploy/nginx/generate-self-signed-cert.sh
+
+      - name: Validate Compose config
+        run: docker compose --env-file .env -f deploy/docker-compose.yml config
+
+      - name: Start stack
+        run: docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+
+      - name: Show stack status
+        run: docker compose --env-file .env -f deploy/docker-compose.yml ps
+
+      - name: Wait for healthy services
+        shell: bash
+        run: |
+          for attempt in $(seq 1 60); do
+            api_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' a1phquest-api 2>/dev/null || true)"
+            frontend_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' a1phquest-frontend 2>/dev/null || true)"
+            nginx_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' a1phquest-nginx 2>/dev/null || true)"
+            worker_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' a1phquest-worker-supervisor 2>/dev/null || true)"
+            postgres_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' a1phquest-postgres 2>/dev/null || true)"
+            echo "Attempt ${attempt}: api=${api_status} frontend=${frontend_status} nginx=${nginx_status} worker=${worker_status} postgres=${postgres_status}"
+            if [[ "${api_status}" == "healthy" && "${frontend_status}" == "healthy" && "${nginx_status}" == "healthy" && "${worker_status}" == "healthy" && "${postgres_status}" == "healthy" ]]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for healthy services" >&2
+          exit 1
+
+      - name: Run HTTPS smoke test
+        env:
+          SMOKE_TEST_API_BASE: https://127.0.0.1:8443
+          SMOKE_TEST_API_VERIFY_SSL: "0"
+        run: python3 deploy/smoke_test_api.py
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose --env-file .env -f deploy/docker-compose.yml logs --no-color
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose --env-file .env -f deploy/docker-compose.yml down -v
