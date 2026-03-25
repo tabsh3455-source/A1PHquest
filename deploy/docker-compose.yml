@@ -1,0 +1,125 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: a1phquest-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker-supervisor:
+    build:
+      context: ..
+      dockerfile: apps/worker-supervisor/Dockerfile
+    container_name: a1phquest-worker-supervisor
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "127.0.0.1:8010:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    container_name: a1phquest-migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    command: ["python", "-m", "app.migrate", "head"]
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    container_name: a1phquest-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      worker-supervisor:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      - MIGRATIONS_RUN_ON_STARTUP=0
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: apps/frontend/Dockerfile
+    container_name: a1phquest-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5173:5173"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: a1phquest-nginx
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    ports:
+      - "${A1PHQUEST_HTTP_PORT:-80}:80"
+      - "${A1PHQUEST_HTTPS_PORT:-443}:443"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - --no-check-certificate https://127.0.0.1/ >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  backup:
+    image: postgres:16
+    container_name: a1phquest-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    volumes:
+      - ./backups:/backups
+      - ./backup.sh:/scripts/backup.sh:ro
+      - ./restore_backup.sh:/scripts/restore_backup.sh:ro
+    entrypoint: ["/bin/bash", "-lc", "while true; do /bin/bash /scripts/backup.sh; sleep 86400; done"]
+
+volumes:
+  postgres_data:

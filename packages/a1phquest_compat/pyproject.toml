@@ -1,0 +1,6 @@
+[project]
+name = "a1phquest-compat"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["vnpy==4.3.0"]
+

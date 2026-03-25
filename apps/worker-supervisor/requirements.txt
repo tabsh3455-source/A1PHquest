@@ -1,0 +1,11 @@
+# Pinned for reproducible VPS/Docker builds.
+fastapi==0.135.1
+uvicorn[standard]==0.42.0
+sqlalchemy==2.0.48
+psycopg2-binary==2.9.10
+cryptography==46.0.5
+vnpy==4.3.0
+vnpy-binance==2026.3.6
+vnpy-okx==2026.2.28
+vnpy-ctastrategy==1.4.1
+vnpy-sqlite==1.1.3

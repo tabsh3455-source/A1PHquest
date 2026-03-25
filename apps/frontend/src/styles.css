@@ -1,0 +1,250 @@
+:root {
+  color-scheme: light;
+  --aq-ink-strong: #0d1b2b;
+  --aq-ink: #2e3f56;
+  --aq-ink-soft: #5e6f88;
+  --aq-border: #d2deed;
+  --aq-border-strong: #b8cae1;
+  --aq-surface: rgba(255, 255, 255, 0.88);
+  --aq-surface-strong: #ffffff;
+  --aq-shadow: 0 18px 45px rgba(21, 39, 65, 0.12);
+  --aq-brand: #1f6feb;
+  --aq-brand-ink: #1254bc;
+  --aq-brand-soft: #dbe9ff;
+  --aq-accent: #009d87;
+  --aq-warning: #b16a00;
+  --el-color-primary: #1f6feb;
+  --el-color-primary-light-3: #4b86eb;
+  --el-color-primary-light-5: #78a4f1;
+  --el-color-primary-light-7: #a8c4f7;
+  --el-color-primary-light-9: #dbe9ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--aq-ink);
+  font-family: "Sora", "IBM Plex Sans", "PingFang SC", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 8% 8%, #f3f8ff 0%, rgba(243, 248, 255, 0) 56%),
+    radial-gradient(circle at 92% 14%, #eefaf7 0%, rgba(238, 250, 247, 0) 54%),
+    linear-gradient(180deg, #f7fbff 0%, #eef4fb 100%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.aq-page {
+  min-height: 100vh;
+  padding: 22px 16px 30px;
+}
+
+.aq-shell {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+.aq-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--aq-border);
+  background: var(--aq-surface);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--aq-shadow);
+}
+
+.aq-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.aq-brand-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  background: linear-gradient(135deg, #1f6feb 0%, #009d87 100%);
+  box-shadow: 0 8px 20px rgba(31, 111, 235, 0.25);
+}
+
+.aq-brand-copy {
+  display: inline-flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.aq-brand-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--aq-ink-strong);
+}
+
+.aq-brand-subtitle {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--aq-ink-soft);
+}
+
+.aq-toolbar {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.aq-main {
+  margin-top: 16px;
+}
+
+.aq-panel {
+  border: 1px solid var(--aq-border);
+  background: var(--aq-surface-strong);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 14px 32px rgba(18, 35, 60, 0.08);
+}
+
+.aq-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.aq-title-row h1,
+.aq-title-row h2 {
+  margin: 0;
+  color: var(--aq-ink-strong);
+}
+
+.aq-subtitle {
+  margin: 8px 0 0;
+  color: var(--aq-ink-soft);
+  line-height: 1.5;
+}
+
+.aq-fade-up {
+  animation: aq-fade-up 340ms ease-out;
+}
+
+.aq-chip {
+  border-radius: 999px;
+  border: 1px solid var(--aq-border);
+  background: #f7fafe;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--aq-ink-soft);
+}
+
+.aq-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.aq-grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.aq-grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.aq-soft-block {
+  border: 1px solid var(--aq-border);
+  border-radius: 14px;
+  background: #f8fbff;
+  padding: 14px;
+}
+
+.aq-kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.aq-kv-label {
+  color: var(--aq-ink-soft);
+  font-size: 12px;
+}
+
+.aq-kv-value {
+  color: var(--aq-ink-strong);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.aq-form-note {
+  margin-top: 6px;
+  color: var(--aq-ink-soft);
+  font-size: 12px;
+}
+
+.el-button + .el-button {
+  margin-left: 8px;
+}
+
+.el-table th.el-table__cell {
+  background-color: #f4f8ff;
+}
+
+.el-table__row:hover > td.el-table__cell {
+  background-color: #f7fbff;
+}
+
+.el-alert {
+  border-radius: 12px;
+}
+
+@keyframes aq-fade-up {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .aq-page {
+    padding: 14px 10px 20px;
+  }
+
+  .aq-topbar {
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .aq-main {
+    margin-top: 12px;
+  }
+
+  .aq-panel {
+    border-radius: 14px;
+    padding: 12px;
+  }
+}
