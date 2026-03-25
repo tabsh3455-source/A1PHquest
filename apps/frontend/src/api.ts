@@ -1,7 +1,20 @@
 import axios from "axios";
 import { readonly, shallowRef } from "vue";
 
-export const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
+function resolveApiBase() {
+  const configuredBase = String(import.meta.env.VITE_API_BASE || "").trim();
+  if (configuredBase) {
+    return configuredBase;
+  }
+
+  const { protocol, hostname, origin, port } = window.location;
+  if (port === "5173" || port === "4173") {
+    return `${protocol}//${hostname}:8000`;
+  }
+  return origin;
+}
+
+export const API_BASE = resolveApiBase();
 
 export const http = axios.create({
   baseURL: API_BASE,
@@ -68,6 +81,36 @@ export function readStoredClaims() {
     role: session.user.role,
     twofaPending: false
   };
+}
+
+export function getErrorMessage(error: any, fallback: string) {
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+  if (Array.isArray(detail) && detail.length > 0) {
+    return detail
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+        if (item && typeof item === "object") {
+          const fieldPath = Array.isArray(item.loc) ? item.loc.join(".") : "";
+          const message = String(item.msg || item.message || "").trim();
+          return fieldPath && message ? `${fieldPath}: ${message}` : message || JSON.stringify(item);
+        }
+        return String(item);
+      })
+      .filter(Boolean)
+      .join("; ");
+  }
+  if (typeof error?.response?.data === "string" && error.response.data.trim()) {
+    return error.response.data;
+  }
+  if (typeof error?.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
 }
 
 http.interceptors.request.use((config) => {

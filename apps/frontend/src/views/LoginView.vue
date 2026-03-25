@@ -79,7 +79,7 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import { login, register } from "../api";
+import { getErrorMessage, login, register } from "../api";
 
 const router = useRouter();
 const mode = ref<"login" | "register">("login");
@@ -106,7 +106,7 @@ async function onLogin() {
     messageType.value = "success";
     router.push("/dashboard");
   } catch (error: any) {
-    message.value = error?.response?.data?.detail || "Login failed";
+    message.value = getErrorMessage(error, "Login failed");
     messageType.value = "error";
   } finally {
     loading.value = false;
@@ -135,7 +135,7 @@ async function onRegister() {
     messageType.value = "success";
     router.push("/dashboard");
   } catch (error: any) {
-    message.value = error?.response?.data?.detail || "Registration failed";
+    message.value = getErrorMessage(error, "Registration failed");
     messageType.value = "error";
   } finally {
     loading.value = false;
