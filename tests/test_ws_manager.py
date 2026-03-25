@@ -23,7 +23,7 @@ class _FakeWebSocket:
 
 
 def test_push_to_user_assigns_monotonic_event_sequence(async_runner):
-    manager = WsManager()
+    manager = WsManager(backend="memory")
     ws_a = _FakeWebSocket()
     ws_b = _FakeWebSocket()
 
@@ -40,7 +40,7 @@ def test_push_to_user_assigns_monotonic_event_sequence(async_runner):
 
 
 def test_event_sequence_is_isolated_per_user(async_runner):
-    manager = WsManager()
+    manager = WsManager(backend="memory")
     ws_user_a = _FakeWebSocket()
     ws_user_b = _FakeWebSocket()
 
@@ -55,7 +55,7 @@ def test_event_sequence_is_isolated_per_user(async_runner):
 
 
 def test_push_disconnects_failed_websocket_and_keeps_delivery_for_active_ones(async_runner):
-    manager = WsManager()
+    manager = WsManager(backend="memory")
     ws_ok = _FakeWebSocket()
     ws_fail = _FakeWebSocket(fail_send=True)
 
@@ -71,7 +71,7 @@ def test_push_disconnects_failed_websocket_and_keeps_delivery_for_active_ones(as
 
 
 def test_event_history_replay_supports_after_seq_filter(async_runner):
-    manager = WsManager()
+    manager = WsManager(backend="memory")
     ws = _FakeWebSocket()
     async_runner(manager.connect(41, ws))
     async_runner(manager.push_to_user(41, {"type": "one", "timestamp": "2026-01-01T00:00:00+00:00"}))
@@ -83,7 +83,7 @@ def test_event_history_replay_supports_after_seq_filter(async_runner):
 
 
 def test_push_to_user_dedupe_key_prevents_duplicate_delivery(async_runner):
-    manager = WsManager()
+    manager = WsManager(backend="memory")
     ws = _FakeWebSocket()
     async_runner(manager.connect(42, ws))
 
@@ -96,7 +96,7 @@ def test_push_to_user_dedupe_key_prevents_duplicate_delivery(async_runner):
 
 
 def test_event_history_default_limit_returns_latest_window(async_runner):
-    manager = WsManager()
+    manager = WsManager(backend="memory")
     ws = _FakeWebSocket()
     async_runner(manager.connect(43, ws))
     for index in range(1, 6):
@@ -108,7 +108,7 @@ def test_event_history_default_limit_returns_latest_window(async_runner):
 
 
 def test_connection_count_tracks_online_sockets(async_runner):
-    manager = WsManager()
+    manager = WsManager(backend="memory")
     ws_a = _FakeWebSocket()
     ws_b = _FakeWebSocket()
     async_runner(manager.connect(51, ws_a))

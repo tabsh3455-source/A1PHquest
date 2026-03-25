@@ -52,6 +52,8 @@ _OKX_INTERVALS = {
 
 _BINANCE_SPOT_WS_URL = "wss://stream.binance.com:9443/ws"
 _BINANCE_TESTNET_WS_URL = "wss://stream.testnet.binance.vision/ws"
+_BINANCE_FUTURES_WS_URL = "wss://fstream.binance.com/ws"
+_BINANCE_FUTURES_TESTNET_WS_URL = "wss://stream.binancefuture.com/ws"
 _OKX_PUBLIC_WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 _OKX_DEMO_PUBLIC_WS_URL = "wss://wspap.okx.com:8443/ws/v5/public?brokerId=9999"
 _STREAM_HEALTH_STATES = {"connecting", "live", "reconnecting", "stale", "error"}
@@ -64,29 +66,32 @@ class MarketDataError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class MarketSymbolKey:
     exchange: str
+    market_type: str
     symbol: str
     is_testnet: bool
 
     @property
     def resource_id(self) -> str:
-        return f"{self.exchange}:{self.symbol}:{int(self.is_testnet)}"
+        return f"{self.exchange}:{self.market_type}:{self.symbol}:{int(self.is_testnet)}"
 
 
 @dataclass(frozen=True, slots=True)
 class MarketStreamKey:
     exchange: str
+    market_type: str
     symbol: str
     interval: str
     is_testnet: bool
 
     @property
     def resource_id(self) -> str:
-        return f"{self.exchange}:{self.symbol}:{self.interval}:{int(self.is_testnet)}"
+        return f"{self.exchange}:{self.market_type}:{self.symbol}:{self.interval}:{int(self.is_testnet)}"
 
     @property
     def symbol_key(self) -> MarketSymbolKey:
         return MarketSymbolKey(
             exchange=self.exchange,
+            market_type=self.market_type,
             symbol=self.symbol,
             is_testnet=self.is_testnet,
         )
@@ -95,6 +100,7 @@ class MarketStreamKey:
 @dataclass(frozen=True, slots=True)
 class TradeTick:
     exchange: str
+    market_type: str
     symbol: str
     price: float
     size: float
@@ -105,6 +111,7 @@ class TradeTick:
     def symbol_key(self) -> MarketSymbolKey:
         return MarketSymbolKey(
             exchange=self.exchange,
+            market_type=self.market_type,
             symbol=self.symbol,
             is_testnet=self.is_testnet,
         )
@@ -159,18 +166,21 @@ class PublicMarketDataClient:
         self,
         *,
         exchange: str,
+        market_type: str = "spot",
         symbol: str,
         interval: str,
         limit: int,
         is_testnet: bool,
     ) -> list[dict[str, Any]]:
         normalized_exchange = normalize_market_exchange(exchange)
+        normalized_market_type = normalize_market_type(market_type)
         normalized_interval = normalize_market_interval(interval)
-        normalized_symbol = normalize_market_symbol(normalized_exchange, symbol)
+        normalized_symbol = normalize_market_symbol(normalized_exchange, symbol, normalized_market_type)
         normalized_limit = max(min(int(limit), 1000), 1)
 
         if normalized_exchange == "binance":
             return await self._fetch_binance_history(
+                market_type=normalized_market_type,
                 symbol=normalized_symbol,
                 interval=normalized_interval,
                 limit=normalized_limit,
@@ -178,6 +188,7 @@ class PublicMarketDataClient:
             )
         if normalized_exchange == "okx":
             return await self._fetch_okx_history(
+                market_type=normalized_market_type,
                 symbol=normalized_symbol,
                 interval=normalized_interval,
                 limit=normalized_limit,
@@ -187,14 +198,15 @@ class PublicMarketDataClient:
     async def _fetch_binance_history(
         self,
         *,
+        market_type: str,
         symbol: str,
         interval: str,
         limit: int,
         is_testnet: bool,
     ) -> list[dict[str, Any]]:
         payload = await self._request_json(
-            _binance_public_base_url(is_testnet=is_testnet),
-            "/api/v3/klines",
+            _binance_public_base_url(is_testnet=is_testnet, market_type=market_type),
+            "/fapi/v1/klines" if market_type == "perp" else "/api/v3/klines",
             params={
                 "symbol": symbol,
                 "interval": _BINANCE_INTERVALS[interval],
@@ -223,6 +235,7 @@ class PublicMarketDataClient:
     async def _fetch_okx_history(
         self,
         *,
+        market_type: str,
         symbol: str,
         interval: str,
         limit: int,
@@ -286,6 +299,7 @@ class ExchangeStreamManager:
         self,
         *,
         exchange: str,
+        market_type: str,
         is_testnet: bool,
         ws_url: str,
         idle_timeout_seconds: float,
@@ -295,6 +309,7 @@ class ExchangeStreamManager:
         on_status_change: Callable[[MarketSymbolKey, str, str | None], Awaitable[None]],
     ) -> None:
         self.exchange = normalize_market_exchange(exchange)
+        self.market_type = normalize_market_type(market_type)
         self.is_testnet = bool(is_testnet)
         self._ws_url = ws_url
         self._idle_timeout_seconds = max(float(idle_timeout_seconds), 5.0)
@@ -320,7 +335,7 @@ class ExchangeStreamManager:
         self._stop_event.clear()
         self._task = asyncio.create_task(
             self._run(),
-            name=f"a1phquest-market-stream:{self.exchange}:{int(self.is_testnet)}",
+            name=f"a1phquest-market-stream:{self.exchange}:{self.market_type}:{int(self.is_testnet)}",
         )
 
     async def stop(self) -> None:
@@ -337,14 +352,14 @@ class ExchangeStreamManager:
             pass
 
     async def ensure_symbol(self, symbol: str) -> None:
-        normalized_symbol = normalize_market_symbol(self.exchange, symbol)
+        normalized_symbol = normalize_market_symbol(self.exchange, symbol, self.market_type)
         async with self._lock:
             self._desired_symbols.add(normalized_symbol)
         await self.start()
         self._wake_event.set()
 
     async def release_symbol(self, symbol: str) -> None:
-        normalized_symbol = normalize_market_symbol(self.exchange, symbol)
+        normalized_symbol = normalize_market_symbol(self.exchange, symbol, self.market_type)
         async with self._lock:
             self._desired_symbols.discard(normalized_symbol)
         self._wake_event.set()
@@ -510,7 +525,7 @@ class ExchangeStreamManager:
         await websocket.send(json.dumps(self._build_unsubscribe_payload(symbol, request_id)))
 
     async def _mark_symbol_live(self, websocket: ClientConnection, symbol: str) -> None:
-        normalized_symbol = normalize_market_symbol(self.exchange, symbol)
+        normalized_symbol = normalize_market_symbol(self.exchange, symbol, self.market_type)
         async with self._lock:
             desired = normalized_symbol in self._desired_symbols
             self._pending_subscribes.discard(normalized_symbol)
@@ -522,13 +537,13 @@ class ExchangeStreamManager:
         await self._send_unsubscribe_if_needed(websocket, normalized_symbol)
 
     async def _mark_symbol_unsubscribed(self, symbol: str) -> None:
-        normalized_symbol = normalize_market_symbol(self.exchange, symbol)
+        normalized_symbol = normalize_market_symbol(self.exchange, symbol, self.market_type)
         async with self._lock:
             self._pending_unsubscribes.discard(normalized_symbol)
             self._subscribed_symbols.discard(normalized_symbol)
 
     async def _emit_symbol_error(self, symbol: str, message: str) -> None:
-        normalized_symbol = normalize_market_symbol(self.exchange, symbol)
+        normalized_symbol = normalize_market_symbol(self.exchange, symbol, self.market_type)
         async with self._lock:
             self._pending_subscribes.discard(normalized_symbol)
             self._pending_unsubscribes.discard(normalized_symbol)
@@ -570,7 +585,8 @@ class ExchangeStreamManager:
     def _symbol_key(self, symbol: str) -> MarketSymbolKey:
         return MarketSymbolKey(
             exchange=self.exchange,
-            symbol=normalize_market_symbol(self.exchange, symbol),
+            market_type=self.market_type,
+            symbol=normalize_market_symbol(self.exchange, symbol, self.market_type),
             is_testnet=self.is_testnet,
         )
 
@@ -594,6 +610,7 @@ class BinanceStreamManager(ExchangeStreamManager):
     def __init__(
         self,
         *,
+        market_type: str,
         is_testnet: bool,
         idle_timeout_seconds: float,
         reconnect_base_seconds: float,
@@ -603,8 +620,9 @@ class BinanceStreamManager(ExchangeStreamManager):
     ) -> None:
         super().__init__(
             exchange="binance",
+            market_type=market_type,
             is_testnet=is_testnet,
-            ws_url=_BINANCE_TESTNET_WS_URL if is_testnet else _BINANCE_SPOT_WS_URL,
+            ws_url=_resolve_binance_ws_url(is_testnet=is_testnet, market_type=market_type),
             idle_timeout_seconds=idle_timeout_seconds,
             reconnect_base_seconds=reconnect_base_seconds,
             reconnect_max_seconds=reconnect_max_seconds,
@@ -651,7 +669,7 @@ class BinanceStreamManager(ExchangeStreamManager):
     def _extract_trade_ticks(self, payload: Any) -> list[TradeTick]:
         if not isinstance(payload, dict) or payload.get("e") != "trade":
             return []
-        symbol = normalize_market_symbol(self.exchange, str(payload.get("s") or ""))
+        symbol = normalize_market_symbol(self.exchange, str(payload.get("s") or ""), self.market_type)
         price = _to_float(payload.get("p"))
         size = _to_float(payload.get("q"))
         ts_ms = _to_int(payload.get("T") or payload.get("E"))
@@ -660,6 +678,7 @@ class BinanceStreamManager(ExchangeStreamManager):
         return [
             TradeTick(
                 exchange=self.exchange,
+                market_type=self.market_type,
                 symbol=symbol,
                 price=price,
                 size=max(size, 0.0),
@@ -677,6 +696,7 @@ class OkxStreamManager(ExchangeStreamManager):
     def __init__(
         self,
         *,
+        market_type: str,
         is_testnet: bool,
         idle_timeout_seconds: float,
         reconnect_base_seconds: float,
@@ -686,6 +706,7 @@ class OkxStreamManager(ExchangeStreamManager):
     ) -> None:
         super().__init__(
             exchange="okx",
+            market_type=market_type,
             is_testnet=is_testnet,
             ws_url=_OKX_DEMO_PUBLIC_WS_URL if is_testnet else _OKX_PUBLIC_WS_URL,
             idle_timeout_seconds=idle_timeout_seconds,
@@ -715,7 +736,7 @@ class OkxStreamManager(ExchangeStreamManager):
 
         event = str(payload.get("event") or "").strip().lower()
         arg = payload.get("arg") if isinstance(payload.get("arg"), dict) else {}
-        symbol = normalize_market_symbol(self.exchange, str(arg.get("instId") or "")) if arg else ""
+        symbol = normalize_market_symbol(self.exchange, str(arg.get("instId") or ""), self.market_type) if arg else ""
 
         if event == "subscribe" and symbol:
             await self._mark_symbol_live(websocket, symbol)
@@ -755,6 +776,7 @@ class OkxStreamManager(ExchangeStreamManager):
             symbol = normalize_market_symbol(
                 self.exchange,
                 str(row.get("instId") or arg.get("instId") or ""),
+                self.market_type,
             )
             price = _to_float(row.get("px"))
             size = _to_float(row.get("sz"))
@@ -764,6 +786,7 @@ class OkxStreamManager(ExchangeStreamManager):
             ticks.append(
                 TradeTick(
                     exchange=self.exchange,
+                    market_type=self.market_type,
                     symbol=symbol,
                     price=price,
                     size=max(size, 0.0),
@@ -808,9 +831,12 @@ class MarketDataService:
         self._lock = asyncio.Lock()
         self._connection_streams: dict[tuple[int, int], set[MarketStreamKey]] = {}
         self._stream_subscribers: dict[MarketStreamKey, set[tuple[int, int]]] = {}
+        self._public_connection_streams: dict[int, set[MarketStreamKey]] = {}
+        self._public_stream_subscribers: dict[MarketStreamKey, set[int]] = {}
+        self._public_senders: dict[int, Callable[[dict[str, Any]], Awaitable[None]]] = {}
         self._candle_caches: dict[MarketStreamKey, deque[CandleCacheEntry]] = {}
         self._symbol_health: dict[MarketSymbolKey, MarketStreamHealth] = {}
-        self._managers: dict[tuple[str, bool], ExchangeStreamManager] = {}
+        self._managers: dict[tuple[str, str, bool], ExchangeStreamManager] = {}
         self._started = False
 
     async def start(self) -> None:
@@ -818,9 +844,14 @@ class MarketDataService:
             return
         self._started = True
         for exchange_name in ("binance", "okx"):
-            for is_testnet in (False, True):
-                manager = self._ensure_manager(exchange=exchange_name, is_testnet=is_testnet)
-                await manager.start()
+            for market_type in ("spot", "perp"):
+                for is_testnet in (False, True):
+                    manager = self._ensure_manager(
+                        exchange=exchange_name,
+                        market_type=market_type,
+                        is_testnet=is_testnet,
+                    )
+                    await manager.start()
 
     async def stop(self) -> None:
         managers = list(self._managers.values())
@@ -855,8 +886,13 @@ class MarketDataService:
                         key.symbol_key
                         for key, subscribers in self._stream_subscribers.items()
                         if subscribers
+                    }
+                    | {
+                        key.symbol_key
+                        for key, subscribers in self._public_stream_subscribers.items()
+                        if subscribers
                     },
-                    key=lambda item: (item.exchange, int(item.is_testnet), item.symbol),
+                    key=lambda item: (item.exchange, item.market_type, int(item.is_testnet), item.symbol),
                 )
 
         await asyncio.gather(*(manager.stop() for manager in managers), return_exceptions=True)
@@ -865,6 +901,7 @@ class MarketDataService:
             for symbol_key in active_symbol_keys:
                 manager = self._ensure_manager(
                     exchange=symbol_key.exchange,
+                    market_type=symbol_key.market_type,
                     is_testnet=symbol_key.is_testnet,
                 )
                 await manager.start()
@@ -876,6 +913,7 @@ class MarketDataService:
         self,
         *,
         exchange: str,
+        market_type: str = "spot",
         symbol: str,
         interval: str,
         limit: int,
@@ -883,7 +921,8 @@ class MarketDataService:
     ) -> list[dict[str, Any]]:
         key = MarketStreamKey(
             exchange=normalize_market_exchange(exchange),
-            symbol=normalize_market_symbol(exchange, symbol),
+            market_type=normalize_market_type(market_type),
+            symbol=normalize_market_symbol(exchange, symbol, market_type),
             interval=normalize_market_interval(interval),
             is_testnet=bool(is_testnet),
         )
@@ -892,6 +931,7 @@ class MarketDataService:
         if key.interval not in LIVE_MARKET_INTERVALS:
             return await self._market_client.fetch_history(
                 exchange=key.exchange,
+                market_type=key.market_type,
                 symbol=key.symbol,
                 interval=key.interval,
                 limit=normalized_limit,
@@ -905,6 +945,7 @@ class MarketDataService:
         rest_limit = min(max(normalized_limit, 2), self._rest_backfill_limit)
         history = await self._market_client.fetch_history(
             exchange=key.exchange,
+            market_type=key.market_type,
             symbol=key.symbol,
             interval=key.interval,
             limit=rest_limit,
@@ -922,13 +963,15 @@ class MarketDataService:
         user_id: int,
         connection_id: int,
         exchange: str,
+        market_type: str = "spot",
         symbol: str,
         interval: str,
         is_testnet: bool,
     ) -> MarketStreamKey:
         key = MarketStreamKey(
             exchange=normalize_market_exchange(exchange),
-            symbol=normalize_market_symbol(exchange, symbol),
+            market_type=normalize_market_type(market_type),
+            symbol=normalize_market_symbol(exchange, symbol, market_type),
             interval=normalize_live_market_interval(interval),
             is_testnet=bool(is_testnet),
         )
@@ -947,7 +990,7 @@ class MarketDataService:
                 ),
             )
 
-        manager = self._ensure_manager(exchange=key.exchange, is_testnet=key.is_testnet)
+        manager = self._ensure_manager(exchange=key.exchange, market_type=key.market_type, is_testnet=key.is_testnet)
         await manager.start()
         await manager.ensure_symbol(key.symbol)
         return key
@@ -958,13 +1001,15 @@ class MarketDataService:
         user_id: int,
         connection_id: int,
         exchange: str,
+        market_type: str = "spot",
         symbol: str,
         interval: str,
         is_testnet: bool,
     ) -> MarketStreamKey:
         key = MarketStreamKey(
             exchange=normalize_market_exchange(exchange),
-            symbol=normalize_market_symbol(exchange, symbol),
+            market_type=normalize_market_type(market_type),
+            symbol=normalize_market_symbol(exchange, symbol, market_type),
             interval=normalize_live_market_interval(interval),
             is_testnet=bool(is_testnet),
         )
@@ -977,6 +1022,71 @@ class MarketDataService:
             keys = list(self._connection_streams.pop(connection_key, set()))
         for key in keys:
             await self._remove_subscription(connection_key, key)
+
+    async def register_public_connection(
+        self,
+        connection_id: int,
+        sender: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        async with self._lock:
+            self._public_senders[connection_id] = sender
+
+    async def unsubscribe_public_connection(self, connection_id: int) -> None:
+        async with self._lock:
+            self._public_senders.pop(connection_id, None)
+            keys = list(self._public_connection_streams.pop(connection_id, set()))
+        for key in keys:
+            await self._remove_public_subscription(connection_id, key)
+
+    async def subscribe_public(
+        self,
+        *,
+        connection_id: int,
+        exchange: str,
+        market_type: str = "spot",
+        symbol: str,
+        interval: str,
+        is_testnet: bool = False,
+    ) -> MarketStreamKey:
+        key = MarketStreamKey(
+            exchange=normalize_market_exchange(exchange),
+            market_type=normalize_market_type(market_type),
+            symbol=normalize_market_symbol(exchange, symbol, market_type),
+            interval=normalize_live_market_interval(interval),
+            is_testnet=bool(is_testnet),
+        )
+        async with self._lock:
+            self._public_connection_streams.setdefault(connection_id, set()).add(key)
+            self._public_stream_subscribers.setdefault(key, set()).add(connection_id)
+            self._candle_caches.setdefault(key, deque(maxlen=self._cache_size))
+            self._symbol_health.setdefault(
+                key.symbol_key,
+                MarketStreamHealth(status="connecting", updated_at=datetime.now(timezone.utc), message=None),
+            )
+        manager = self._ensure_manager(exchange=key.exchange, market_type=key.market_type, is_testnet=key.is_testnet)
+        await manager.start()
+        await manager.ensure_symbol(key.symbol)
+        return key
+
+    async def unsubscribe_public(
+        self,
+        *,
+        connection_id: int,
+        exchange: str,
+        market_type: str = "spot",
+        symbol: str,
+        interval: str,
+        is_testnet: bool = False,
+    ) -> MarketStreamKey:
+        key = MarketStreamKey(
+            exchange=normalize_market_exchange(exchange),
+            market_type=normalize_market_type(market_type),
+            symbol=normalize_market_symbol(exchange, symbol, market_type),
+            interval=normalize_live_market_interval(interval),
+            is_testnet=bool(is_testnet),
+        )
+        await self._remove_public_subscription(connection_id, key)
+        return key
 
     async def send_subscription_status(self, user_id: int, key: MarketStreamKey) -> None:
         async with self._lock:
@@ -993,6 +1103,14 @@ class MarketDataService:
             key=key,
             health=health,
         )
+
+    async def send_public_subscription_status(self, connection_id: int, key: MarketStreamKey) -> None:
+        async with self._lock:
+            health = self._symbol_health.get(
+                key.symbol_key,
+                MarketStreamHealth(status="connecting", updated_at=datetime.now(timezone.utc), message=None),
+            )
+        await self._push_public_stream_status(connection_id=connection_id, key=key, health=health)
 
     async def ingest_trade_tick(self, tick: TradeTick) -> None:
         await self._apply_trade_tick(tick)
@@ -1030,9 +1148,17 @@ class MarketDataService:
                 key
                 for key in self._stream_subscribers
                 if key.symbol_key == symbol_key and self._stream_subscribers.get(key)
+            ] + [
+                key
+                for key in self._public_stream_subscribers
+                if key.symbol_key == symbol_key and self._public_stream_subscribers.get(key)
             ]
             user_ids_by_key = {
                 key: sorted({user_id for user_id, _ in self._stream_subscribers.get(key, set())})
+                for key in active_keys
+            }
+            connection_ids_by_key = {
+                key: sorted(self._public_stream_subscribers.get(key, set()))
                 for key in active_keys
             }
 
@@ -1043,6 +1169,12 @@ class MarketDataService:
             for user_id in user_ids_by_key.get(key, []):
                 await self._push_stream_status(
                     user_id=user_id,
+                    key=key,
+                    health=health,
+                )
+            for connection_id in connection_ids_by_key.get(key, []):
+                await self._push_public_stream_status(
+                    connection_id=connection_id,
                     key=key,
                     health=health,
                 )
@@ -1068,16 +1200,53 @@ class MarketDataService:
                 stream_key.symbol_key == key.symbol_key
                 for stream_key, stream_subscribers in self._stream_subscribers.items()
                 if stream_subscribers
+            ) and not any(
+                stream_key.symbol_key == key.symbol_key
+                for stream_key, stream_subscribers in self._public_stream_subscribers.items()
+                if stream_subscribers
             )
             if release_symbol:
                 self._symbol_health.pop(key.symbol_key, None)
 
         if release_symbol:
-            manager = self._ensure_manager(exchange=key.exchange, is_testnet=key.is_testnet)
+            manager = self._ensure_manager(exchange=key.exchange, market_type=key.market_type, is_testnet=key.is_testnet)
+            await manager.release_symbol(key.symbol)
+
+    async def _remove_public_subscription(
+        self,
+        connection_id: int,
+        key: MarketStreamKey,
+    ) -> None:
+        release_symbol = False
+        async with self._lock:
+            subscribers = self._public_stream_subscribers.get(key)
+            if subscribers is not None:
+                subscribers.discard(connection_id)
+                if not subscribers:
+                    self._public_stream_subscribers.pop(key, None)
+            connection_streams = self._public_connection_streams.get(connection_id)
+            if connection_streams is not None:
+                connection_streams.discard(key)
+                if not connection_streams:
+                    self._public_connection_streams.pop(connection_id, None)
+            release_symbol = not any(
+                stream_key.symbol_key == key.symbol_key
+                for stream_key, stream_subscribers in self._stream_subscribers.items()
+                if stream_subscribers
+            ) and not any(
+                stream_key.symbol_key == key.symbol_key
+                for stream_key, stream_subscribers in self._public_stream_subscribers.items()
+                if stream_subscribers
+            )
+            if release_symbol:
+                self._symbol_health.pop(key.symbol_key, None)
+
+        if release_symbol:
+            manager = self._ensure_manager(exchange=key.exchange, market_type=key.market_type, is_testnet=key.is_testnet)
             await manager.release_symbol(key.symbol)
 
     async def _apply_trade_tick(self, tick: TradeTick) -> None:
-        emitted: list[tuple[MarketStreamKey, CandleCacheEntry, list[int]]] = []
+        emitted: list[tuple[MarketStreamKey, CandleCacheEntry, list[int], list[int]]] = []
 
         async with self._lock:
             has_subscribers = any(
@@ -1090,6 +1259,7 @@ class MarketDataService:
             for interval in LIVE_MARKET_INTERVALS:
                 key = MarketStreamKey(
                     exchange=tick.exchange,
+                    market_type=tick.market_type,
                     symbol=tick.symbol,
                     interval=interval,
                     is_testnet=tick.is_testnet,
@@ -1101,6 +1271,7 @@ class MarketDataService:
                     interval_seconds=interval_seconds,
                 )
                 user_ids = sorted({user_id for user_id, _ in self._stream_subscribers.get(key, set())})
+                connection_ids = sorted(self._public_stream_subscribers.get(key, set()))
 
                 rollover_events = _apply_trade_to_cache(
                     cache=cache,
@@ -1109,16 +1280,18 @@ class MarketDataService:
                     size=tick.size,
                 )
                 for entry in rollover_events:
-                    emitted.append((key, entry, user_ids))
+                    emitted.append((key, entry, user_ids, connection_ids))
 
         await self.update_symbol_status(tick.symbol_key, "live")
 
-        for key, entry, user_ids in emitted:
-            if not user_ids:
-                continue
-            await asyncio.gather(
-                *(self._push_candle(user_id=user_id, key=key, candle=entry) for user_id in user_ids)
+        for key, entry, user_ids, connection_ids in emitted:
+            tasks = [self._push_candle(user_id=user_id, key=key, candle=entry) for user_id in user_ids]
+            tasks.extend(
+                self._push_public_candle(connection_id=connection_id, key=key, candle=entry)
+                for connection_id in connection_ids
             )
+            if tasks:
+                await asyncio.gather(*tasks)
 
     async def _backfill_symbol(self, symbol_key: MarketSymbolKey) -> None:
         await asyncio.gather(
@@ -1126,6 +1299,7 @@ class MarketDataService:
                 self._backfill_interval(
                     MarketStreamKey(
                         exchange=symbol_key.exchange,
+                        market_type=symbol_key.market_type,
                         symbol=symbol_key.symbol,
                         interval=interval,
                         is_testnet=symbol_key.is_testnet,
@@ -1155,14 +1329,18 @@ class MarketDataService:
 
         async with self._lock:
             user_ids = sorted({user_id for user_id, _ in self._stream_subscribers.get(key, set())})
+            connection_ids = sorted(self._public_stream_subscribers.get(key, set()))
 
-        if not user_ids:
+        if not user_ids and not connection_ids:
             return
 
         for entry in inserted_entries:
-            await asyncio.gather(
-                *(self._push_candle(user_id=user_id, key=key, candle=entry) for user_id in user_ids)
+            tasks = [self._push_candle(user_id=user_id, key=key, candle=entry) for user_id in user_ids]
+            tasks.extend(
+                self._push_public_candle(connection_id=connection_id, key=key, candle=entry)
+                for connection_id in connection_ids
             )
+            await asyncio.gather(*tasks)
 
     async def _merge_rest_seed(
         self,
@@ -1269,14 +1447,63 @@ class MarketDataService:
             ),
         )
 
-    def _ensure_manager(self, *, exchange: str, is_testnet: bool) -> ExchangeStreamManager:
+    async def _push_public_candle(self, *, connection_id: int, key: MarketStreamKey, candle: CandleCacheEntry) -> None:
+        await self._send_public_payload(
+            connection_id=connection_id,
+            payload={
+                "type": "market_candle",
+                "payload": {
+                    "exchange": key.exchange,
+                    "market_type": key.market_type,
+                    "symbol": key.symbol,
+                    "interval": key.interval,
+                    "is_testnet": key.is_testnet,
+                    "source": candle.source,
+                    "is_closed": candle.is_closed,
+                    "candle": candle.to_market_kline(),
+                },
+            },
+        )
+
+    async def _push_public_stream_status(
+        self,
+        *,
+        connection_id: int,
+        key: MarketStreamKey,
+        health: MarketStreamHealth,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "type": "market_stream_status",
+            "payload": {
+                "exchange": key.exchange,
+                "market_type": key.market_type,
+                "symbol": key.symbol,
+                "interval": key.interval,
+                "is_testnet": key.is_testnet,
+                "status": health.status,
+            },
+        }
+        if health.message:
+            payload["payload"]["message"] = health.message
+        await self._send_public_payload(connection_id=connection_id, payload=payload)
+
+    async def _send_public_payload(self, *, connection_id: int, payload: dict[str, Any]) -> None:
+        async with self._lock:
+            sender = self._public_senders.get(connection_id)
+        if sender is None:
+            return
+        await sender(payload)
+
+    def _ensure_manager(self, *, exchange: str, market_type: str, is_testnet: bool) -> ExchangeStreamManager:
         normalized_exchange = normalize_market_exchange(exchange)
-        lookup_key = (normalized_exchange, bool(is_testnet))
+        normalized_market_type = normalize_market_type(market_type)
+        lookup_key = (normalized_exchange, normalized_market_type, bool(is_testnet))
         manager = self._managers.get(lookup_key)
         if manager is not None:
             return manager
 
         manager_kwargs = {
+            "market_type": normalized_market_type,
             "is_testnet": bool(is_testnet),
             "idle_timeout_seconds": self._idle_timeout_seconds,
             "reconnect_base_seconds": self._reconnect_base_seconds,
@@ -1356,13 +1583,30 @@ def normalize_market_runtime_config(config: dict[str, Any] | None) -> dict[str, 
     }
 
 
-def normalize_market_symbol(exchange: str, symbol: str) -> str:
+def normalize_market_type(market_type: Any) -> str:
+    if hasattr(market_type, "default"):
+        market_type = getattr(market_type, "default")
+    normalized = str(market_type or "").strip().lower() or "spot"
+    if normalized not in {"spot", "perp"}:
+        raise MarketDataError("market_type must be one of: spot, perp")
+    return normalized
+
+
+def normalize_market_symbol(exchange: str, symbol: str, market_type: str = "spot") -> str:
     normalized_exchange = normalize_market_exchange(exchange)
+    normalized_market_type = normalize_market_type(market_type)
     raw_symbol = str(symbol or "").strip().upper().replace("/", "").replace(" ", "")
     if not raw_symbol:
         raise MarketDataError("Symbol is required")
     if normalized_exchange == "binance":
         return raw_symbol.replace("-", "")
+    if normalized_market_type == "perp" and normalized_exchange == "okx" and not raw_symbol.endswith("-SWAP"):
+        if "-" in raw_symbol:
+            return f"{raw_symbol}-SWAP"
+        for quote in ("USDT", "USDC", "USD", "BTC", "ETH"):
+            if raw_symbol.endswith(quote) and len(raw_symbol) > len(quote):
+                base = raw_symbol[: -len(quote)]
+                return f"{base}-{quote}-SWAP"
     if "-" in raw_symbol:
         return raw_symbol
     for quote in ("USDT", "USDC", "USD", "BTC", "ETH"):
@@ -1372,8 +1616,18 @@ def normalize_market_symbol(exchange: str, symbol: str) -> str:
     return raw_symbol
 
 
-def _binance_public_base_url(*, is_testnet: bool) -> str:
+def _binance_public_base_url(*, is_testnet: bool, market_type: str) -> str:
+    normalized_market_type = normalize_market_type(market_type)
+    if normalized_market_type == "perp":
+        return settings.binance_futures_testnet_base_url if is_testnet else settings.binance_futures_base_url
     return settings.binance_testnet_base_url if is_testnet else settings.binance_spot_base_url
+
+
+def _resolve_binance_ws_url(*, is_testnet: bool, market_type: str) -> str:
+    normalized_market_type = normalize_market_type(market_type)
+    if normalized_market_type == "perp":
+        return _BINANCE_FUTURES_TESTNET_WS_URL if is_testnet else _BINANCE_FUTURES_WS_URL
+    return _BINANCE_TESTNET_WS_URL if is_testnet else _BINANCE_SPOT_WS_URL
 
 
 def _build_candle(

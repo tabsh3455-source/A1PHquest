@@ -4,9 +4,16 @@ import { loadSession } from "./api";
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/", redirect: "/login" },
-    { path: "/login", component: () => import("./views/LoginView.vue"), meta: { title: "Login" } },
-    { path: "/dashboard", component: () => import("./views/DashboardView.vue"), meta: { title: "Dashboard" } },
+    { path: "/", redirect: "/market" },
+    { path: "/login", redirect: "/auth" },
+    { path: "/dashboard", redirect: "/market" },
+    { path: "/market", component: () => import("./views/MarketView.vue"), meta: { title: "Market", public: true } },
+    { path: "/auth", component: () => import("./views/LoginView.vue"), meta: { title: "Auth", public: true } },
+    {
+      path: "/auth/enroll-2fa",
+      component: () => import("./views/LoginView.vue"),
+      meta: { title: "Enroll 2FA", public: true, enrollmentOnly: true }
+    },
     { path: "/accounts", component: () => import("./views/AccountsView.vue"), meta: { title: "Accounts" } },
     { path: "/strategies", component: () => import("./views/StrategiesView.vue"), meta: { title: "Strategies" } },
     { path: "/ai", component: () => import("./views/AiView.vue"), meta: { title: "AI Autopilot" } },
@@ -17,17 +24,32 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   const session = await loadSession().catch(() => null);
-  if (to.path === "/login") {
-    return session ? "/dashboard" : true;
-  }
+  const isPublic = Boolean(to.meta?.public);
+  const enrollmentOnly = Boolean(to.meta?.enrollmentOnly);
+
   if (!session) {
-    return "/login";
+    if (isPublic) {
+      return true;
+    }
+    return "/auth";
   }
+
+  if (session.enrollment_required) {
+    if (to.path === "/auth" || enrollmentOnly || to.path === "/market") {
+      return true;
+    }
+    return "/auth/enroll-2fa";
+  }
+
+  if (to.path === "/auth" || enrollmentOnly) {
+    return "/market";
+  }
+
   return true;
 });
 
 router.afterEach((to) => {
-  const pageTitle = String(to.meta?.title || "Dashboard");
+  const pageTitle = String(to.meta?.title || "Market");
   document.title = `${pageTitle} | A1phquest`;
 });
 

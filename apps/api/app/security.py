@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import base64
 import hashlib
 import hmac
+import io
 import os
+import secrets
 from typing import Any
 
 import jwt
 from jwt import InvalidTokenError
 from passlib.context import CryptContext
 import pyotp
+import qrcode
+from qrcode.image.svg import SvgImage
 
 from .config import get_settings
 
@@ -116,3 +121,31 @@ def build_totp_uri(secret: str, username: str) -> str:
 def verify_totp(secret: str, code: str) -> bool:
     totp = pyotp.TOTP(secret)
     return totp.verify(code, valid_window=1)
+
+
+def build_qr_svg_data_url(value: str) -> str:
+    image = qrcode.make(value, image_factory=SvgImage)
+    buffer = io.BytesIO()
+    image.save(buffer)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+def generate_recovery_codes(*, count: int = 8) -> list[str]:
+    codes: list[str] = []
+    for _ in range(max(count, 1)):
+        block = secrets.token_hex(4).upper()
+        codes.append(f"AQ-{block[:4]}-{block[4:]}")
+    return codes
+
+
+def hash_recovery_code(code: str) -> str:
+    return hash_password(code.strip().upper())
+
+
+def verify_recovery_code(code: str, code_hash: str) -> bool:
+    return verify_password(code.strip().upper(), code_hash)
+
+
+def hash_opaque_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

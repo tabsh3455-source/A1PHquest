@@ -46,8 +46,9 @@ def authenticate_access_token_user(
     if not user:
         raise HTTPException(status_code=invalid_status, detail="User not found")
     _enforce_token_version(user=user, payload=payload, invalid_status=invalid_status)
-    if require_verified and payload.get("twofa_pending") and user.totp_secret_encrypted:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="2FA verification required")
+    if require_verified and payload.get("twofa_pending"):
+        detail = "2FA enrollment required" if not user.totp_secret_encrypted else "2FA verification required"
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
     return user
 
 

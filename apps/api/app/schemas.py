@@ -28,10 +28,46 @@ class UserRegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class RegistrationStartResponse(BaseModel):
+    registration_token: str
+    otp_secret: str
+    otpauth_uri: str
+    qr_svg_data_url: str
+    expires_at: datetime
+
+
+class RegistrationCompleteRequest(BaseModel):
+    registration_token: str = Field(min_length=16, max_length=255)
+    otp_code: str = Field(min_length=6, max_length=6)
+
+
+class TwoFactorEnrollmentStartResponse(BaseModel):
+    otp_secret: str
+    otpauth_uri: str
+    qr_svg_data_url: str
+
+
+class TwoFactorEnrollmentCompleteRequest(BaseModel):
+    otp_code: str = Field(min_length=6, max_length=6)
+
+
+class RecoveryCodesResponse(BaseModel):
+    recovery_codes: list[str] = Field(default_factory=list, min_length=1)
+
+
+class AuthFlowResponse(BaseModel):
+    user: "UserResponse"
+    csrf_token: str
+    authenticated: bool = True
+    enrollment_required: bool = False
+    recovery_codes: list[str] = Field(default_factory=list)
+
+
 class UserLoginRequest(BaseModel):
     username: str
     password: str
     otp_code: str | None = Field(default=None, min_length=6, max_length=6)
+    recovery_code: str | None = Field(default=None, min_length=8, max_length=64)
 
 
 class UserResponse(BaseModel):
@@ -47,6 +83,7 @@ class UserResponse(BaseModel):
 
 class AuthSessionResponse(BaseModel):
     authenticated: bool = True
+    enrollment_required: bool = False
     user: UserResponse
     csrf_token: str
 
@@ -285,19 +322,44 @@ class OrderCancelResponse(BaseModel):
 
 class StrategyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    strategy_type: Literal["grid", "dca", "funding_arbitrage", "spot_future_arbitrage", "custom"]
+    template_key: str | None = Field(default=None, min_length=1, max_length=64)
+    strategy_type: Literal["grid", "dca", "funding_arbitrage", "spot_future_arbitrage", "custom"] | None = None
     config: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def normalize_template_key(self):
+        if not self.template_key and self.strategy_type:
+            self.template_key = self.strategy_type
+        if not self.template_key:
+            raise ValueError("template_key is required")
+        return self
 
 
 class StrategyUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    strategy_type: Literal["grid", "dca", "funding_arbitrage", "spot_future_arbitrage", "custom"]
+    template_key: str | None = Field(default=None, min_length=1, max_length=64)
+    strategy_type: Literal["grid", "dca", "funding_arbitrage", "spot_future_arbitrage", "custom"] | None = None
     config: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def normalize_template_key(self):
+        if not self.template_key and self.strategy_type:
+            self.template_key = self.strategy_type
+        if not self.template_key:
+            raise ValueError("template_key is required")
+        return self
 
 
 class StrategyResponse(BaseModel):
     id: int
     name: str
+    template_key: str
+    template_display_name: str
+    category: str
+    execution_status: str
+    market_scope: str
+    risk_level: str
+    live_supported: bool = False
     strategy_type: str
     config: dict[str, Any] = Field(default_factory=dict)
     status: str
@@ -352,6 +414,49 @@ class GridStrategyConfig(BaseStrategyConfig):
 class DcaStrategyConfig(BaseStrategyConfig):
     cycle_seconds: int = Field(gt=0, le=86_400)
     amount_per_cycle: float = Field(gt=0)
+
+
+class FuturesGridStrategyConfig(GridStrategyConfig):
+    leverage: int = Field(ge=1, le=50, default=3)
+    direction: Literal["long", "short", "neutral"] = "neutral"
+
+
+class ComboGridDcaStrategyConfig(BaseStrategyConfig):
+    grid_count: int = Field(ge=2, le=1000)
+    grid_step_pct: float = Field(gt=0, le=100)
+    base_order_size: float = Field(gt=0)
+    cycle_seconds: int = Field(gt=0, le=86_400)
+    amount_per_cycle: float = Field(gt=0)
+
+
+class RebalanceStrategyConfig(BaseStrategyConfig):
+    target_base_ratio: float = Field(gt=0, lt=1)
+    rebalance_threshold_pct: float = Field(gt=0, le=100)
+    min_order_size: float = Field(gt=0)
+
+
+class SignalBotStrategyConfig(BaseStrategyConfig):
+    signal_source: str = Field(min_length=2, max_length=128)
+    entry_side: Literal["buy", "sell", "both"] = "both"
+    order_size: float = Field(gt=0)
+
+
+class SpotPerpArbitrageStrategyConfig(BaseStrategyConfig):
+    basis_entry_threshold_pct: float = Field(gt=0, le=100)
+    basis_exit_threshold_pct: float = Field(gt=0, le=100)
+    hedge_notional: float = Field(gt=0)
+
+
+class FundingHedgeStrategyConfig(BaseStrategyConfig):
+    funding_entry_threshold_pct: float = Field(gt=0, le=100)
+    funding_exit_threshold_pct: float = Field(gt=0, le=100)
+    hedge_notional: float = Field(gt=0)
+
+
+class MarketMakingStrategyConfig(BaseStrategyConfig):
+    spread_pct: float = Field(gt=0, le=100)
+    order_size: float = Field(gt=0)
+    levels: int = Field(ge=1, le=20)
 
 
 class ParametricStrategyConfig(BaseStrategyConfig):
@@ -427,9 +532,65 @@ class MarketKlineItem(BaseModel):
 class MarketKlineResponse(BaseModel):
     exchange_account_id: int
     exchange: str
+    market_type: Literal["spot", "perp"] = "spot"
     symbol: str
     interval: str
     candles: list[MarketKlineItem] = Field(default_factory=list)
+
+
+class PublicMarketKlineResponse(BaseModel):
+    exchange: str
+    market_type: Literal["spot", "perp"]
+    symbol: str
+    interval: str
+    candles: list[MarketKlineItem] = Field(default_factory=list)
+
+
+class PublicMarketSymbolItem(BaseModel):
+    exchange: str
+    market_type: Literal["spot", "perp"]
+    symbol: str
+    label: str
+    is_default: bool = False
+
+
+class PublicMarketSymbolsResponse(BaseModel):
+    exchange: str
+    market_type: Literal["spot", "perp"]
+    symbols: list[PublicMarketSymbolItem] = Field(default_factory=list)
+
+
+class StrategyTemplateFieldOption(BaseModel):
+    label: str
+    value: str
+
+
+class StrategyTemplateField(BaseModel):
+    key: str
+    label: str
+    input_type: Literal["text", "number", "select", "switch"]
+    required: bool = True
+    description: str | None = None
+    default: Any = None
+    min: float | int | None = None
+    max: float | int | None = None
+    step: float | int | None = None
+    precision: int | None = None
+    options: list[StrategyTemplateFieldOption] = Field(default_factory=list)
+
+
+class StrategyTemplateResponse(BaseModel):
+    template_key: str
+    display_name: str
+    category: str
+    description: str
+    execution_status: Literal["live_supported", "draft_only"]
+    market_scope: str
+    risk_level: Literal["low", "medium", "high"]
+    runtime_strategy_type: str
+    fields: list[StrategyTemplateField] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    is_featured: bool = False
 
 
 class MarketDataConfigRequest(BaseModel):

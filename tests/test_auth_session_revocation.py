@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 from app.deps import authenticate_access_token_user, get_current_user, require_step_up_user
 from app.models import Base, User
@@ -33,7 +33,7 @@ def test_logout_revokes_existing_access_token():
         token = create_access_token(str(user.id), {"role": user.role, "twofa_pending": False, "token_version": 0})
         assert get_current_user(db=db, token=token).id == user.id
 
-        auth.logout(current_user=user, db=db)
+        auth.logout(current_user=user, db=db, response=Response())
 
         try:
             get_current_user(db=db, token=token)
@@ -82,7 +82,7 @@ def test_authenticated_access_token_user_rejects_revoked_token():
         token = create_access_token(str(user.id), {"role": user.role, "twofa_pending": False, "token_version": 0})
         assert authenticate_access_token_user(db=db, token=token, require_verified=True).id == user.id
 
-        auth.logout(current_user=user, db=db)
+        auth.logout(current_user=user, db=db, response=Response())
 
         try:
             authenticate_access_token_user(db=db, token=token, require_verified=True)

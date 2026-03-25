@@ -20,6 +20,15 @@ def _build_request(ip: str = "127.0.0.1", user_agent: str = "pytest-agent"):
     return SimpleNamespace(headers={"user-agent": user_agent}, client=SimpleNamespace(host=ip))
 
 
+def _login(db: Session, *, username: str, password: str, otp_code: str | None = None, response: Response | None = None):
+    return auth.login(
+        UserLoginRequest(username=username, password=password, otp_code=otp_code),
+        _build_request(),
+        response or Response(),
+        db,
+    )
+
+
 def test_login_requires_google_authenticator_code_when_2fa_enabled():
     with _build_session() as db:
         otp_secret = pyotp.random_base32()
@@ -35,32 +44,25 @@ def test_login_requires_google_authenticator_code_when_2fa_enabled():
         db.commit()
 
         try:
-            auth.login(
-                UserLoginRequest(username="alice", password="StrongPass123!"),
-                _build_request(),
-                db,
-            )
+            _login(db, username="alice", password="StrongPass123!")
             raise AssertionError("Expected HTTPException for missing otp_code")
         except HTTPException as exc:
             assert exc.status_code == 400
 
         try:
-            auth.login(
-                UserLoginRequest(username="alice", password="StrongPass123!", otp_code="000000"),
-                _build_request(),
-                db,
-            )
+            _login(db, username="alice", password="StrongPass123!", otp_code="000000")
             raise AssertionError("Expected HTTPException for invalid otp_code")
         except HTTPException as exc:
             assert exc.status_code == 401
 
         valid_code = pyotp.TOTP(otp_secret).now()
         raw_response = Response()
-        response = auth.login(
-            UserLoginRequest(username="alice", password="StrongPass123!", otp_code=valid_code),
-            _build_request(),
+        response = _login(
             db,
-            raw_response,
+            username="alice",
+            password="StrongPass123!",
+            otp_code=valid_code,
+            response=raw_response,
         )
         assert response.authenticated is True
         assert response.user.username == "alice"

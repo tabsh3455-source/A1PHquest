@@ -8,6 +8,7 @@ import secrets
 import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..audit import log_audit_event
@@ -15,11 +16,17 @@ from ..config import get_settings
 from ..db import get_db
 from ..deps import get_access_token, get_current_user, get_current_user_optional, get_current_verified_user
 from ..kms import build_kms_provider
-from ..models import AuditEvent, User
+from ..models import AuditEvent, PendingRegistration, User, UserRecoveryCode
 from ..schemas import (
+    AuthFlowResponse,
     AuthSessionResponse,
+    RegistrationCompleteRequest,
+    RegistrationStartResponse,
+    RecoveryCodesResponse,
     StepUpRequest,
     StepUpTokenResponse,
+    TwoFactorEnrollmentCompleteRequest,
+    TwoFactorEnrollmentStartResponse,
     TOTPSetupRequest,
     TOTPSetupResponse,
     TOTPVerifyRequest,
@@ -29,11 +36,16 @@ from ..schemas import (
 )
 from ..security import (
     build_totp_uri,
+    build_qr_svg_data_url,
     create_access_token,
     create_step_up_token,
+    generate_recovery_codes,
     generate_totp_secret,
+    hash_opaque_token,
     hash_password,
+    hash_recovery_code,
     verify_password,
+    verify_recovery_code,
     verify_totp,
 )
 from ..services.notifications import NotificationService
@@ -142,42 +154,87 @@ login_rate_limiter = _InMemoryRateLimiter()
 step_up_rate_limiter = _InMemoryRateLimiter()
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: UserRegisterRequest, db: Session = Depends(get_db)):
-    normalized_username = payload.username.strip()
-    normalized_email = str(payload.email).strip().lower()
-    if len(normalized_username) < 3:
-        raise HTTPException(status_code=400, detail="Username must be at least 3 non-space characters")
+@router.post("/register", response_model=RegistrationStartResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register/start", response_model=RegistrationStartResponse, status_code=status.HTTP_201_CREATED)
+def register_start(payload: UserRegisterRequest, db: Session = Depends(get_db)):
+    normalized_username, normalized_email = _normalize_registration_identity(payload)
+    _purge_expired_pending_registrations(db)
+    _ensure_registration_available(db=db, username=normalized_username, email=normalized_email)
 
-    existing = (
-        db.query(User)
-        .filter((User.username == normalized_username) | (User.email == normalized_email))
-        .first()
-    )
-    if existing:
-        raise HTTPException(status_code=400, detail="Username or email already exists")
-
-    user = User(
+    token = secrets.token_urlsafe(32)
+    secret = generate_totp_secret()
+    pending = PendingRegistration(
         username=normalized_username,
         email=normalized_email,
         password_hash=hash_password(payload.password),
+        totp_secret_encrypted=kms.encrypt(secret),
+        registration_token_hash=hash_opaque_token(token),
+        expires_at=_utcnow() + timedelta(minutes=settings.registration_token_expire_minutes),
+    )
+    db.add(pending)
+    db.commit()
+
+    otpauth_uri = build_totp_uri(secret, normalized_username)
+    return RegistrationStartResponse(
+        registration_token=token,
+        otp_secret=secret,
+        otpauth_uri=otpauth_uri,
+        qr_svg_data_url=build_qr_svg_data_url(otpauth_uri),
+        expires_at=pending.expires_at,
+    )
+
+
+@router.post("/register/complete", response_model=AuthFlowResponse, status_code=status.HTTP_201_CREATED)
+def register_complete(
+    payload: RegistrationCompleteRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    _purge_expired_pending_registrations(db)
+    pending = _get_pending_registration(db, payload.registration_token)
+    secret = kms.decrypt(pending.totp_secret_encrypted)
+    if not verify_totp(secret, payload.otp_code):
+        raise HTTPException(status_code=400, detail="Invalid Google Authenticator code")
+
+    _ensure_registration_available(
+        db=db,
+        username=pending.username,
+        email=pending.email,
+        exclude_pending_id=pending.id,
+    )
+    user = User(
+        username=pending.username,
+        email=pending.email,
+        password_hash=pending.password_hash,
         role="user",
         is_active=True,
+        totp_secret_encrypted=pending.totp_secret_encrypted,
+        pending_totp_secret_encrypted=None,
     )
     db.add(user)
+    db.flush()
+    recovery_codes = _replace_recovery_codes(db, user_id=user.id)
+    db.delete(pending)
     db.commit()
     db.refresh(user)
 
     log_audit_event(db, user_id=user.id, action="register", resource="user", resource_id=str(user.id))
-    return user
+    token = _issue_access_token(user=user, twofa_pending=False)
+    return _build_auth_flow_response(
+        user=user,
+        access_token=token,
+        response=response,
+        enrollment_required=False,
+        recovery_codes=recovery_codes,
+    )
 
 
 @router.post("/login", response_model=AuthSessionResponse)
 def login(
     payload: UserLoginRequest,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
-    response: Response = None,
 ):
     normalized_username = payload.username.strip()
     client_ip, client_ip_source = _extract_client_ip(request)
@@ -215,43 +272,13 @@ def login(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     requires_2fa = bool(user.totp_secret_encrypted)
-    if requires_2fa:
-        if not payload.otp_code:
-            login_rate_limiter.register_failure(
-                key=login_limit_key,
-                max_attempts=settings.auth_login_max_attempts,
-                window_seconds=settings.auth_login_window_seconds,
-                lockout_seconds=settings.auth_login_lockout_seconds,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Google Authenticator code is required",
-            )
-        secret = kms.decrypt(user.totp_secret_encrypted or "")
-        if not verify_totp(secret, payload.otp_code):
-            login_rate_limiter.register_failure(
-                key=login_limit_key,
-                max_attempts=settings.auth_login_max_attempts,
-                window_seconds=settings.auth_login_window_seconds,
-                lockout_seconds=settings.auth_login_lockout_seconds,
-            )
-            log_audit_event(
-                db,
-                user_id=user.id,
-                action="login_failed",
-                resource="session",
-                details={"client_ip": client_ip, "client_ip_source": client_ip_source, "reason": "invalid_otp"},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid Google Authenticator code",
-            )
-
+    enrollment_required = not requires_2fa
+    if enrollment_required:
+        token = _issue_access_token(user=user, twofa_pending=True)
+    else:
+        _verify_login_second_factor(db=db, user=user, payload=payload, login_limit_key=login_limit_key, client_ip=client_ip, client_ip_source=client_ip_source)
+        token = _issue_access_token(user=user, twofa_pending=False)
     login_rate_limiter.register_success(key=login_limit_key)
-    token = create_access_token(
-        str(user.id),
-        {"role": user.role, "twofa_pending": False, "token_version": int(user.token_version or 0)},
-    )
     user_agent = request.headers.get("user-agent", "")
     client_geo_country, client_geo_source = _extract_geo_country(request)
     risk = _assess_login_risk(
@@ -313,15 +340,78 @@ def login(
                 "max_alerts_per_hour": int(settings.login_anomaly_max_alerts_per_hour),
             },
         )
-    return _build_authenticated_session_response(user=user, access_token=token, response=response)
+    return _build_authenticated_session_response(
+        user=user,
+        access_token=token,
+        response=response,
+        enrollment_required=enrollment_required,
+    )
+
+
+@router.post("/2fa/enroll/start", response_model=TwoFactorEnrollmentStartResponse)
+def start_2fa_enrollment(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.totp_secret_encrypted:
+        raise HTTPException(status_code=400, detail="2FA is already configured")
+
+    secret = generate_totp_secret()
+    current_user.pending_totp_secret_encrypted = kms.encrypt(secret)
+    db.add(current_user)
+    db.commit()
+
+    otpauth_uri = build_totp_uri(secret, current_user.username)
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store"
+    return TwoFactorEnrollmentStartResponse(
+        otp_secret=secret,
+        otpauth_uri=otpauth_uri,
+        qr_svg_data_url=build_qr_svg_data_url(otpauth_uri),
+    )
+
+
+@router.post("/2fa/enroll/complete", response_model=AuthFlowResponse)
+def complete_2fa_enrollment(
+    payload: TwoFactorEnrollmentCompleteRequest,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.totp_secret_encrypted:
+        raise HTTPException(status_code=400, detail="2FA is already configured")
+    if not current_user.pending_totp_secret_encrypted:
+        raise HTTPException(status_code=400, detail="2FA enrollment has not been started")
+
+    secret = kms.decrypt(current_user.pending_totp_secret_encrypted)
+    if not verify_totp(secret, payload.otp_code):
+        raise HTTPException(status_code=400, detail="Invalid Google Authenticator code")
+
+    current_user.totp_secret_encrypted = current_user.pending_totp_secret_encrypted
+    current_user.pending_totp_secret_encrypted = None
+    db.add(current_user)
+    recovery_codes = _replace_recovery_codes(db, user_id=current_user.id)
+    db.commit()
+    db.refresh(current_user)
+
+    token = _issue_access_token(user=current_user, twofa_pending=False)
+    log_audit_event(db, user_id=current_user.id, action="2fa_enroll_complete", resource="user")
+    return _build_auth_flow_response(
+        user=current_user,
+        access_token=token,
+        response=response,
+        enrollment_required=False,
+        recovery_codes=recovery_codes,
+    )
 
 
 @router.post("/2fa/setup", response_model=TOTPSetupResponse)
 def setup_2fa(
     payload: TOTPSetupRequest,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    response: Response = None,
 ):
     if current_user.totp_secret_encrypted:
         if not payload.current_code:
@@ -357,9 +447,9 @@ def setup_2fa(
 @router.post("/2fa/verify", response_model=AuthSessionResponse)
 def verify_2fa(
     payload: TOTPVerifyRequest,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    response: Response = None,
 ):
     if not current_user.totp_secret_encrypted:
         raise HTTPException(status_code=400, detail="2FA is not configured")
@@ -383,16 +473,21 @@ def verify_2fa(
 @router.get("/session", response_model=AuthSessionResponse)
 def get_auth_session(
     request: Request,
-    current_user: User = Depends(get_current_verified_user),
+    response: Response,
+    current_user: User = Depends(get_current_user),
     token: str = Depends(get_access_token),
-    response: Response = None,
 ):
     existing_csrf_token = str(request.cookies.get(settings.csrf_cookie_name) or "").strip()
     csrf_token = existing_csrf_token or _generate_csrf_token()
     _set_auth_cookies(response=response, access_token=token, csrf_token=csrf_token)
     if response is not None:
         response.headers["Cache-Control"] = "no-store"
-    return AuthSessionResponse(user=current_user, csrf_token=csrf_token)
+    return AuthSessionResponse(
+        user=current_user,
+        csrf_token=csrf_token,
+        authenticated=True,
+        enrollment_required=not bool(current_user.totp_secret_encrypted),
+    )
 
 
 @router.post("/2fa/step-up", response_model=StepUpTokenResponse)
@@ -461,9 +556,9 @@ def step_up_2fa(
 
 @router.post("/logout")
 def logout(
+    response: Response,
     current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
-    response: Response = None,
 ):
     # Revoking by monotonically increasing token_version invalidates all previously
     # issued access and step-up JWTs without requiring server-side token storage.
@@ -478,17 +573,206 @@ def logout(
     return {"message": "Logged out"}
 
 
+def _build_auth_flow_response(
+    *,
+    user: User,
+    access_token: str,
+    response: Response | None,
+    enrollment_required: bool,
+    recovery_codes: list[str] | None = None,
+) -> AuthFlowResponse:
+    base = _build_authenticated_session_response(
+        user=user,
+        access_token=access_token,
+        response=response,
+        enrollment_required=enrollment_required,
+    )
+    return AuthFlowResponse(
+        user=base.user,
+        csrf_token=base.csrf_token,
+        authenticated=base.authenticated,
+        enrollment_required=base.enrollment_required,
+        recovery_codes=recovery_codes or [],
+    )
+
+
+def _issue_access_token(*, user: User, twofa_pending: bool) -> str:
+    return create_access_token(
+        str(user.id),
+        {
+            "role": user.role,
+            "twofa_pending": bool(twofa_pending),
+            "token_version": int(user.token_version or 0),
+        },
+    )
+
+
+def _verify_login_second_factor(
+    *,
+    db: Session,
+    user: User,
+    payload: UserLoginRequest,
+    login_limit_key: str,
+    client_ip: str,
+    client_ip_source: str,
+) -> None:
+    if payload.recovery_code:
+        if _consume_recovery_code(db=db, user=user, recovery_code=payload.recovery_code):
+            return
+        login_rate_limiter.register_failure(
+            key=login_limit_key,
+            max_attempts=settings.auth_login_max_attempts,
+            window_seconds=settings.auth_login_window_seconds,
+            lockout_seconds=settings.auth_login_lockout_seconds,
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid recovery code")
+
+    if not payload.otp_code:
+        login_rate_limiter.register_failure(
+            key=login_limit_key,
+            max_attempts=settings.auth_login_max_attempts,
+            window_seconds=settings.auth_login_window_seconds,
+            lockout_seconds=settings.auth_login_lockout_seconds,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google Authenticator code is required",
+        )
+
+    secret = kms.decrypt(user.totp_secret_encrypted or "")
+    if verify_totp(secret, payload.otp_code):
+        return
+
+    login_rate_limiter.register_failure(
+        key=login_limit_key,
+        max_attempts=settings.auth_login_max_attempts,
+        window_seconds=settings.auth_login_window_seconds,
+        lockout_seconds=settings.auth_login_lockout_seconds,
+    )
+    log_audit_event(
+        db,
+        user_id=user.id,
+        action="login_failed",
+        resource="session",
+        details={"client_ip": client_ip, "client_ip_source": client_ip_source, "reason": "invalid_otp"},
+    )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid Google Authenticator code",
+    )
+
+
+def _consume_recovery_code(*, db: Session, user: User, recovery_code: str) -> bool:
+    normalized = recovery_code.strip().upper()
+    if not normalized:
+        return False
+
+    candidates = (
+        db.query(UserRecoveryCode)
+        .filter(
+            UserRecoveryCode.user_id == user.id,
+            UserRecoveryCode.used_at.is_(None),
+        )
+        .all()
+    )
+    for item in candidates:
+        if not verify_recovery_code(normalized, item.code_hash):
+            continue
+        item.used_at = _utcnow()
+        db.add(item)
+        db.commit()
+        log_audit_event(db, user_id=user.id, action="recovery_code_used", resource="session")
+        return True
+    return False
+
+
+def _replace_recovery_codes(db: Session, *, user_id: int) -> list[str]:
+    db.query(UserRecoveryCode).filter(UserRecoveryCode.user_id == user_id).delete()
+    raw_codes = generate_recovery_codes()
+    for raw_code in raw_codes:
+        db.add(
+            UserRecoveryCode(
+                user_id=user_id,
+                code_hash=hash_recovery_code(raw_code),
+            )
+        )
+    db.flush()
+    return raw_codes
+
+
+def _normalize_registration_identity(payload: UserRegisterRequest) -> tuple[str, str]:
+    normalized_username = payload.username.strip()
+    normalized_email = str(payload.email).strip().lower()
+    if len(normalized_username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 non-space characters")
+    return normalized_username, normalized_email
+
+
+def _purge_expired_pending_registrations(db: Session) -> None:
+    db.query(PendingRegistration).filter(PendingRegistration.expires_at < _utcnow()).delete()
+    db.commit()
+
+
+def _ensure_registration_available(
+    *,
+    db: Session,
+    username: str,
+    email: str,
+    exclude_pending_id: int | None = None,
+) -> None:
+    existing_user = (
+        db.query(User)
+        .filter(or_(User.username == username, User.email == email))
+        .first()
+    )
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username or email already exists")
+
+    existing_pending = (
+        db.query(PendingRegistration)
+        .filter(or_(PendingRegistration.username == username, PendingRegistration.email == email))
+        .first()
+    )
+    if existing_pending and existing_pending.id != exclude_pending_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Registration is already in progress for that username or email",
+        )
+
+
+def _get_pending_registration(db: Session, token: str) -> PendingRegistration:
+    token_hash = hash_opaque_token(token.strip())
+    pending = (
+        db.query(PendingRegistration)
+        .filter(PendingRegistration.registration_token_hash == token_hash)
+        .first()
+    )
+    if not pending or pending.expires_at < _utcnow():
+        raise HTTPException(status_code=400, detail="Registration token is invalid or expired")
+    return pending
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _build_authenticated_session_response(
     *,
     user: User,
     access_token: str,
     response: Response | None,
+    enrollment_required: bool = False,
 ) -> AuthSessionResponse:
     csrf_token = _generate_csrf_token()
     _set_auth_cookies(response=response, access_token=access_token, csrf_token=csrf_token)
     if response is not None:
         response.headers["Cache-Control"] = "no-store"
-    return AuthSessionResponse(user=user, csrf_token=csrf_token)
+    return AuthSessionResponse(
+        user=user,
+        csrf_token=csrf_token,
+        authenticated=True,
+        enrollment_required=enrollment_required,
+    )
 
 
 def _set_auth_cookies(*, response: Response | None, access_token: str, csrf_token: str) -> None:
@@ -545,6 +829,10 @@ def _cookie_domain() -> str | None:
 
 def _generate_csrf_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+# Backward-compatible symbol exports used by older tests and internal callers.
+register = register_start
 
 
 def _extract_client_ip(request: Request) -> tuple[str, str]:

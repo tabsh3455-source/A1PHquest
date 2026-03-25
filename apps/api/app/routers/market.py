@@ -12,6 +12,7 @@ from ..services.market_data import (
     MarketDataService,
     normalize_market_interval,
     normalize_market_symbol,
+    normalize_market_type,
 )
 from ..tenant import with_tenant
 
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/api/market", tags=["market"])
 async def get_market_klines(
     request: Request,
     exchange_account_id: int = Query(gt=0),
+    market_type: str = Query(default="spot"),
     symbol: str = Query(min_length=2, max_length=64),
     interval: str = Query(default="1m"),
     limit: int = Query(default=300, ge=1, le=1000),
@@ -45,6 +47,7 @@ async def get_market_klines(
     try:
         candles = await service.fetch_history(
             exchange=account.exchange,
+            market_type=market_type,
             symbol=symbol,
             interval=interval,
             limit=limit,
@@ -56,7 +59,8 @@ async def get_market_klines(
     return MarketKlineResponse(
         exchange_account_id=exchange_account_id,
         exchange=account.exchange,
-        symbol=normalize_market_symbol(account.exchange, symbol),
+        market_type=normalize_market_type(market_type),  # type: ignore[arg-type]
+        symbol=normalize_market_symbol(account.exchange, symbol, market_type),
         interval=normalize_market_interval(interval),
         candles=candles,
     )

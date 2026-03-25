@@ -90,6 +90,7 @@ async def _noop_status(*_args) -> None:
 
 def test_binance_stream_manager_normalizes_trade_message():
     manager = BinanceStreamManager(
+        market_type="spot",
         is_testnet=True,
         idle_timeout_seconds=25,
         reconnect_base_seconds=1,
@@ -118,6 +119,7 @@ def test_binance_stream_manager_normalizes_trade_message():
 
 def test_okx_stream_manager_normalizes_trade_message():
     manager = OkxStreamManager(
+        market_type="spot",
         is_testnet=False,
         idle_timeout_seconds=25,
         reconnect_base_seconds=1,
@@ -165,6 +167,7 @@ def test_market_data_service_rolls_candles_and_pushes_closed_and_live_updates(as
             user_id=11,
             connection_id=22,
             exchange="binance",
+            market_type="spot",
             symbol="BTCUSDT",
             interval="1m",
             is_testnet=True,
@@ -175,6 +178,7 @@ def test_market_data_service_rolls_candles_and_pushes_closed_and_live_updates(as
         service.ingest_trade_tick(
             TradeTick(
                 exchange="binance",
+                market_type="spot",
                 symbol="BTCUSDT",
                 price=100.0,
                 size=0.5,
@@ -187,6 +191,7 @@ def test_market_data_service_rolls_candles_and_pushes_closed_and_live_updates(as
         service.ingest_trade_tick(
             TradeTick(
                 exchange="binance",
+                market_type="spot",
                 symbol="BTCUSDT",
                 price=101.5,
                 size=0.25,
@@ -199,6 +204,7 @@ def test_market_data_service_rolls_candles_and_pushes_closed_and_live_updates(as
         service.ingest_trade_tick(
             TradeTick(
                 exchange="binance",
+                market_type="spot",
                 symbol="BTCUSDT",
                 price=99.25,
                 size=0.1,
@@ -232,6 +238,7 @@ def test_fetch_history_uses_warm_cache_before_rest_backfill(async_runner):
             user_id=1,
             connection_id=2,
             exchange="binance",
+            market_type="spot",
             symbol="BTCUSDT",
             interval="1m",
             is_testnet=True,
@@ -241,6 +248,7 @@ def test_fetch_history_uses_warm_cache_before_rest_backfill(async_runner):
         service.ingest_trade_tick(
             TradeTick(
                 exchange="binance",
+                market_type="spot",
                 symbol="BTCUSDT",
                 price=100.0,
                 size=0.5,
@@ -253,6 +261,7 @@ def test_fetch_history_uses_warm_cache_before_rest_backfill(async_runner):
     candles = async_runner(
         service.fetch_history(
             exchange="binance",
+            market_type="spot",
             symbol="BTCUSDT",
             interval="1m",
             limit=1,
@@ -284,6 +293,7 @@ def test_fetch_history_backfills_cold_cache(async_runner):
     candles = async_runner(
         service.fetch_history(
             exchange="binance",
+            market_type="spot",
             symbol="BTCUSDT",
             interval="1m",
             limit=2,
@@ -298,6 +308,7 @@ def test_fetch_history_backfills_cold_cache(async_runner):
     cached = async_runner(
         service.fetch_history(
             exchange="binance",
+            market_type="spot",
             symbol="BTCUSDT",
             interval="1m",
             limit=2,
@@ -321,6 +332,7 @@ def test_market_data_service_pushes_stream_status_changes(async_runner):
             user_id=7,
             connection_id=8,
             exchange="okx",
+            market_type="spot",
             symbol="BTCUSDT",
             interval="1m",
             is_testnet=False,
@@ -348,6 +360,7 @@ def test_market_data_service_unsubscribe_connection_releases_stream(async_runner
             user_id=7,
             connection_id=8,
             exchange="binance",
+            market_type="spot",
             symbol="BTCUSDT",
             interval="5m",
             is_testnet=True,
@@ -372,6 +385,7 @@ def test_market_data_service_apply_runtime_config_updates_runtime_values(async_r
             user_id=1,
             connection_id=2,
             exchange="binance",
+            market_type="spot",
             symbol="BTCUSDT",
             interval="1m",
             is_testnet=True,
@@ -381,6 +395,7 @@ def test_market_data_service_apply_runtime_config_updates_runtime_values(async_r
         service.ingest_trade_tick(
             TradeTick(
                 exchange="binance",
+                market_type="spot",
                 symbol="BTCUSDT",
                 price=100.0,
                 size=0.1,
@@ -417,6 +432,7 @@ def test_market_history_route_returns_candles_for_owned_account(async_runner):
             get_market_klines(
                 request=request,
                 exchange_account_id=account.id,
+                market_type="spot",
                 symbol=" btcusdt ",
                 interval="1m",
                 limit=50,
@@ -442,6 +458,7 @@ def test_market_history_route_blocks_unsupported_exchange(async_runner):
                 get_market_klines(
                     request=request,
                     exchange_account_id=account.id,
+                    market_type="spot",
                     symbol="BTCUSDT",
                     interval="1m",
                     limit=50,

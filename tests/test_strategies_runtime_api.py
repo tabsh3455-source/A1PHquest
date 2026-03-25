@@ -110,7 +110,7 @@ class _RunningSupervisor:
 
 
 def test_grid_strategy_config_validation_enforces_required_fields_and_symbol_normalization():
-    valid = strategies_router._validate_strategy_config(
+    _, valid = strategies_router._validate_strategy_config(
         "grid",
         {
             "exchange_account_id": 1,
@@ -150,14 +150,23 @@ def test_dca_strategy_config_validation_blocks_invalid_boundaries():
 
 
 def test_non_live_builtin_strategy_config_still_requires_account_and_symbol():
-    valid = strategies_router._validate_strategy_config(
+    _, valid = strategies_router._validate_strategy_config(
         "funding_arbitrage",
-        {"exchange_account_id": 9, "symbol": " eth-usdt-swap "},
+        {
+            "exchange_account_id": 9,
+            "symbol": " eth-usdt-swap ",
+            "funding_entry_threshold_pct": 0.2,
+            "funding_exit_threshold_pct": 0.05,
+            "hedge_notional": 250,
+        },
     )
     assert valid["symbol"] == "ETH-USDT-SWAP"
 
     with pytest.raises(HTTPException) as exc:
-        strategies_router._validate_strategy_config("spot_future_arbitrage", {"params": {"window": 5}})
+        strategies_router._validate_strategy_config(
+            "spot_future_arbitrage",
+            {"params": {"window": 5}},
+        )
     assert exc.value.status_code == 400
 
 

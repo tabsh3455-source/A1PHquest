@@ -546,6 +546,7 @@ class AiAutopilotService:
         generated = Strategy(
             user_id=policy.user_id,
             name=str(preview["name"]),
+            template_key=base_strategy.template_key,
             strategy_type=base_strategy.strategy_type,
             config_json=json.dumps(preview["config"], ensure_ascii=False),
             status="stopped",
@@ -567,6 +568,7 @@ class AiAutopilotService:
                 resource_id=str(generated.id),
                 details_json=json.dumps(
                     {
+                        "template_key": generated.template_key,
                         "strategy_type": generated.strategy_type,
                         "trigger": "ai_autopilot",
                         "policy_id": int(policy.id),
@@ -685,6 +687,7 @@ def _build_candidate_summaries(
             {
                 "id": int(strategy.id),
                 "name": strategy.name,
+                "template_key": str(strategy.template_key or ""),
                 "strategy_type": strategy.strategy_type,
                 "status": strategy.status,
                 "is_running": strategy.status in {"starting", "running", "stopping"},

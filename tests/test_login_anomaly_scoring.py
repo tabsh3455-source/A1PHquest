@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 import json
 
+from fastapi import Response
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,15 @@ def _build_request(*, ip: str, ua: str, country: str | None = None, extra_header
     if extra_headers:
         headers.update(extra_headers)
     return SimpleNamespace(headers=headers, client=SimpleNamespace(host=ip))
+
+
+def _login(db: Session, *, username: str, password: str, request) -> None:
+    auth.login(
+        UserLoginRequest(username=username, password=password),
+        request,
+        Response(),
+        db,
+    )
 
 
 class _FakeNotificationService:
@@ -51,16 +61,8 @@ def test_login_anomaly_scoring_triggers_alert_when_threshold_reached(monkeypatch
         fake_notification = _FakeNotificationService()
         monkeypatch.setattr(auth, "notification_service", fake_notification)
 
-        auth.login(
-            UserLoginRequest(username="risk-user-a", password="StrongPass123!"),
-            _build_request(ip="1.1.1.1", ua="ua-a", country="CN"),
-            db,
-        )
-        auth.login(
-            UserLoginRequest(username="risk-user-a", password="StrongPass123!"),
-            _build_request(ip="2.2.2.2", ua="ua-b", country="US"),
-            db,
-        )
+        _login(db, username="risk-user-a", password="StrongPass123!", request=_build_request(ip="1.1.1.1", ua="ua-a", country="CN"))
+        _login(db, username="risk-user-a", password="StrongPass123!", request=_build_request(ip="2.2.2.2", ua="ua-b", country="US"))
 
         assert len(fake_notification.alerts) == 1
         row = db.query(AuditEvent).filter(AuditEvent.action == "login_anomaly").first()
@@ -87,16 +89,8 @@ def test_login_anomaly_scoring_no_alert_for_low_risk_change(monkeypatch):
         fake_notification = _FakeNotificationService()
         monkeypatch.setattr(auth, "notification_service", fake_notification)
 
-        auth.login(
-            UserLoginRequest(username="risk-user-b", password="StrongPass123!"),
-            _build_request(ip="3.3.3.3", ua="ua-a", country="CN"),
-            db,
-        )
-        auth.login(
-            UserLoginRequest(username="risk-user-b", password="StrongPass123!"),
-            _build_request(ip="3.3.3.3", ua="ua-b", country="CN"),
-            db,
-        )
+        _login(db, username="risk-user-b", password="StrongPass123!", request=_build_request(ip="3.3.3.3", ua="ua-a", country="CN"))
+        _login(db, username="risk-user-b", password="StrongPass123!", request=_build_request(ip="3.3.3.3", ua="ua-b", country="CN"))
 
         assert fake_notification.alerts == []
         anomaly_rows = db.query(AuditEvent).filter(AuditEvent.action == "login_anomaly").count()
@@ -120,9 +114,11 @@ def test_login_uses_proxy_headers_for_ip_and_geo_signals(monkeypatch):
         fake_notification = _FakeNotificationService()
         monkeypatch.setattr(auth, "notification_service", fake_notification)
 
-        auth.login(
-            UserLoginRequest(username="risk-user-c", password="StrongPass123!"),
-            _build_request(
+        _login(
+            db,
+            username="risk-user-c",
+            password="StrongPass123!",
+            request=_build_request(
                 ip="10.0.0.10",
                 ua="ua-c",
                 extra_headers={
@@ -130,7 +126,6 @@ def test_login_uses_proxy_headers_for_ip_and_geo_signals(monkeypatch):
                     "cf-ipcountry": "SG",
                 },
             ),
-            db,
         )
         row = db.query(AuditEvent).filter(AuditEvent.action == "login").order_by(AuditEvent.id.desc()).first()
         assert row is not None
@@ -158,9 +153,11 @@ def test_login_prefers_x_real_ip_over_spoofed_forwarded_for(monkeypatch):
         fake_notification = _FakeNotificationService()
         monkeypatch.setattr(auth, "notification_service", fake_notification)
 
-        auth.login(
-            UserLoginRequest(username="risk-user-proxy", password="StrongPass123!"),
-            _build_request(
+        _login(
+            db,
+            username="risk-user-proxy",
+            password="StrongPass123!",
+            request=_build_request(
                 ip="10.0.0.10",
                 ua="ua-proxy",
                 extra_headers={
@@ -168,7 +165,6 @@ def test_login_prefers_x_real_ip_over_spoofed_forwarded_for(monkeypatch):
                     "x-real-ip": "198.51.100.77",
                 },
             ),
-            db,
         )
         row = db.query(AuditEvent).filter(AuditEvent.action == "login").order_by(AuditEvent.id.desc()).first()
         assert row is not None
@@ -196,21 +192,9 @@ def test_login_anomaly_alert_is_suppressed_by_cooldown(monkeypatch):
         monkeypatch.setattr(auth.settings, "login_anomaly_alert_cooldown_seconds", 3600)
         monkeypatch.setattr(auth.settings, "login_anomaly_max_alerts_per_hour", 10)
 
-        auth.login(
-            UserLoginRequest(username="risk-user-d", password="StrongPass123!"),
-            _build_request(ip="11.11.11.1", ua="ua-d1", country="CN"),
-            db,
-        )
-        auth.login(
-            UserLoginRequest(username="risk-user-d", password="StrongPass123!"),
-            _build_request(ip="11.11.11.2", ua="ua-d2", country="US"),
-            db,
-        )
-        auth.login(
-            UserLoginRequest(username="risk-user-d", password="StrongPass123!"),
-            _build_request(ip="11.11.11.3", ua="ua-d3", country="SG"),
-            db,
-        )
+        _login(db, username="risk-user-d", password="StrongPass123!", request=_build_request(ip="11.11.11.1", ua="ua-d1", country="CN"))
+        _login(db, username="risk-user-d", password="StrongPass123!", request=_build_request(ip="11.11.11.2", ua="ua-d2", country="US"))
+        _login(db, username="risk-user-d", password="StrongPass123!", request=_build_request(ip="11.11.11.3", ua="ua-d3", country="SG"))
 
         assert len(fake_notification.alerts) == 1
         rows = (
@@ -247,21 +231,9 @@ def test_login_anomaly_alert_is_suppressed_by_hourly_limit(monkeypatch):
         monkeypatch.setattr(auth.settings, "login_anomaly_alert_cooldown_seconds", 0)
         monkeypatch.setattr(auth.settings, "login_anomaly_max_alerts_per_hour", 1)
 
-        auth.login(
-            UserLoginRequest(username="risk-user-e", password="StrongPass123!"),
-            _build_request(ip="21.21.21.1", ua="ua-e1", country="CN"),
-            db,
-        )
-        auth.login(
-            UserLoginRequest(username="risk-user-e", password="StrongPass123!"),
-            _build_request(ip="21.21.21.2", ua="ua-e2", country="US"),
-            db,
-        )
-        auth.login(
-            UserLoginRequest(username="risk-user-e", password="StrongPass123!"),
-            _build_request(ip="21.21.21.3", ua="ua-e3", country="JP"),
-            db,
-        )
+        _login(db, username="risk-user-e", password="StrongPass123!", request=_build_request(ip="21.21.21.1", ua="ua-e1", country="CN"))
+        _login(db, username="risk-user-e", password="StrongPass123!", request=_build_request(ip="21.21.21.2", ua="ua-e2", country="US"))
+        _login(db, username="risk-user-e", password="StrongPass123!", request=_build_request(ip="21.21.21.3", ua="ua-e3", country="JP"))
 
         assert len(fake_notification.alerts) == 1
         rows = (
@@ -294,9 +266,11 @@ def test_login_ignores_untrusted_proxy_headers_by_default(monkeypatch):
         fake_notification = _FakeNotificationService()
         monkeypatch.setattr(auth, "notification_service", fake_notification)
 
-        auth.login(
-            UserLoginRequest(username="risk-user-f", password="StrongPass123!"),
-            _build_request(
+        _login(
+            db,
+            username="risk-user-f",
+            password="StrongPass123!",
+            request=_build_request(
                 ip="10.0.0.10",
                 ua="ua-f",
                 extra_headers={
@@ -304,7 +278,6 @@ def test_login_ignores_untrusted_proxy_headers_by_default(monkeypatch):
                     "cf-ipcountry": "SG",
                 },
             ),
-            db,
         )
         row = db.query(AuditEvent).filter(AuditEvent.action == "login").order_by(AuditEvent.id.desc()).first()
         assert row is not None

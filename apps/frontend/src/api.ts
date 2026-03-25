@@ -32,8 +32,13 @@ export type SessionUser = {
 
 export type AuthSession = {
   authenticated: boolean;
+  enrollment_required: boolean;
   user: SessionUser;
   csrf_token: string;
+};
+
+export type AuthFlowResponse = AuthSession & {
+  recovery_codes: string[];
 };
 
 const sessionState = shallowRef<AuthSession | null>(null);
@@ -79,7 +84,7 @@ export function readStoredClaims() {
   return {
     sub: String(session.user.id),
     role: session.user.role,
-    twofaPending: false
+    twofaPending: Boolean(session.enrollment_required)
   };
 }
 
@@ -174,13 +179,59 @@ export async function login(username: string, password: string, otpCode?: string
   return applySession(resp.data as AuthSession);
 }
 
-export async function register(username: string, email: string, password: string) {
-  const resp = await http.post("/api/auth/register", {
+export async function loginWithRecoveryCode(username: string, password: string, recoveryCode: string) {
+  clearSessionState();
+  const resp = await http.post("/api/auth/login", {
+    username,
+    password,
+    recovery_code: recoveryCode
+  });
+  return applySession(resp.data as AuthSession);
+}
+
+export async function startRegistration(username: string, email: string, password: string) {
+  const resp = await http.post("/api/auth/register/start", {
     username,
     email,
     password
   });
-  return resp.data as SessionUser;
+  return resp.data as {
+    registration_token: string;
+    otp_secret: string;
+    otpauth_uri: string;
+    qr_svg_data_url: string;
+    expires_at: string;
+  };
+}
+
+export async function completeRegistration(registrationToken: string, otpCode: string) {
+  clearSessionState();
+  const resp = await http.post("/api/auth/register/complete", {
+    registration_token: registrationToken,
+    otp_code: otpCode
+  });
+  const flow = resp.data as AuthFlowResponse;
+  applySession(flow);
+  return flow;
+}
+
+export async function startTwoFactorEnrollment() {
+  await ensureSession();
+  const resp = await http.post("/api/auth/2fa/enroll/start", {});
+  return resp.data as {
+    otp_secret: string;
+    otpauth_uri: string;
+    qr_svg_data_url: string;
+  };
+}
+
+export async function completeTwoFactorEnrollment(otpCode: string) {
+  const resp = await http.post("/api/auth/2fa/enroll/complete", {
+    otp_code: otpCode
+  });
+  const flow = resp.data as AuthFlowResponse;
+  applySession(flow);
+  return flow;
 }
 
 export async function logout() {
@@ -354,13 +405,20 @@ export type StrategyType = "grid" | "dca";
 
 export type StrategyCreatePayload = {
   name: string;
-  strategy_type: StrategyType;
+  template_key: string;
   config: Record<string, unknown>;
 };
 
 export type StrategyItem = {
   id: number;
   name: string;
+  template_key: string;
+  template_display_name: string;
+  category: string;
+  execution_status: string;
+  market_scope: string;
+  risk_level: string;
+  live_supported: boolean;
   strategy_type: string;
   config: Record<string, unknown>;
   status: string;
@@ -431,6 +489,7 @@ export type MarketKlineItem = {
 export type MarketKlineResponse = {
   exchange_account_id: number;
   exchange: string;
+  market_type: "spot" | "perp";
   symbol: string;
   interval: string;
   candles: MarketKlineItem[];
@@ -440,18 +499,103 @@ export async function getMarketKlines(
   exchangeAccountId: number,
   symbol: string,
   interval: string,
+  marketType: "spot" | "perp" = "spot",
   limit = 300
 ) {
   await ensureSession();
   const resp = await http.get("/api/market/klines", {
     params: {
       exchange_account_id: exchangeAccountId,
+      market_type: marketType,
       symbol,
       interval,
       limit
     }
   });
   return resp.data as MarketKlineResponse;
+}
+
+export type PublicMarketKlineResponse = {
+  exchange: string;
+  market_type: "spot" | "perp";
+  symbol: string;
+  interval: string;
+  candles: MarketKlineItem[];
+};
+
+export type PublicMarketSymbolItem = {
+  exchange: string;
+  market_type: "spot" | "perp";
+  symbol: string;
+  label: string;
+  is_default: boolean;
+};
+
+export async function getPublicMarketKlines(
+  exchange: string,
+  marketType: "spot" | "perp",
+  symbol: string,
+  interval: string,
+  limit = 300
+) {
+  const resp = await http.get("/api/public/market/klines", {
+    params: {
+      exchange,
+      market_type: marketType,
+      symbol,
+      interval,
+      limit
+    }
+  });
+  return resp.data as PublicMarketKlineResponse;
+}
+
+export async function listPublicMarketSymbols(exchange: string, marketType: "spot" | "perp") {
+  const resp = await http.get("/api/public/market/symbols", {
+    params: {
+      exchange,
+      market_type: marketType
+    }
+  });
+  return resp.data as { exchange: string; market_type: "spot" | "perp"; symbols: PublicMarketSymbolItem[] };
+}
+
+export type StrategyTemplateFieldOption = {
+  label: string;
+  value: string;
+};
+
+export type StrategyTemplateField = {
+  key: string;
+  label: string;
+  input_type: "text" | "number" | "select" | "switch";
+  required: boolean;
+  description?: string | null;
+  default: unknown;
+  min?: number | null;
+  max?: number | null;
+  step?: number | null;
+  precision?: number | null;
+  options: StrategyTemplateFieldOption[];
+};
+
+export type StrategyTemplateItem = {
+  template_key: string;
+  display_name: string;
+  category: string;
+  description: string;
+  execution_status: "live_supported" | "draft_only";
+  market_scope: string;
+  risk_level: "low" | "medium" | "high";
+  runtime_strategy_type: string;
+  fields: StrategyTemplateField[];
+  tags: string[];
+  is_featured: boolean;
+};
+
+export async function listStrategyTemplates() {
+  const resp = await http.get("/api/strategy-templates");
+  return resp.data as StrategyTemplateItem[];
 }
 
 export type AiProviderItem = {

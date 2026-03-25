@@ -58,6 +58,28 @@ async def ws_events(websocket: WebSocket):
         await websocket.close()
 
 
+@router.websocket("/ws/market")
+async def ws_public_market(websocket: WebSocket):
+    await websocket.accept()
+    market_data: MarketDataService = websocket.app.state.market_data_service
+    connection_id = id(websocket)
+    await market_data.register_public_connection(connection_id, websocket.send_json)
+    try:
+        while True:
+            raw_message = await websocket.receive_text()
+            await _handle_public_market_ws_message(
+                websocket=websocket,
+                connection_id=connection_id,
+                market_data=market_data,
+                raw_message=raw_message,
+            )
+    except WebSocketDisconnect:
+        await market_data.unsubscribe_public_connection(connection_id)
+    except Exception:
+        await market_data.unsubscribe_public_connection(connection_id)
+        await websocket.close()
+
+
 def _extract_ws_token(websocket: WebSocket) -> str | None:
     """
     Resolve websocket auth token from headers first to reduce URL token leakage.
@@ -127,6 +149,7 @@ async def _handle_ws_message(
         exchange_account_id = 0
     symbol = str(payload.get("symbol") or "").strip()
     interval = str(payload.get("interval") or "1m").strip()
+    market_type = str(payload.get("market_type") or "spot").strip()
 
     if exchange_account_id <= 0 or not symbol:
         await websocket.send_json(
@@ -165,6 +188,7 @@ async def _handle_ws_message(
                 user_id=user_id,
                 connection_id=connection_id,
                 exchange=account.exchange,
+                market_type=market_type,
                 symbol=symbol,
                 interval=interval,
                 is_testnet=account.is_testnet,
@@ -174,6 +198,7 @@ async def _handle_ws_message(
                 user_id=user_id,
                 connection_id=connection_id,
                 exchange=account.exchange,
+                market_type=market_type,
                 symbol=symbol,
                 interval=interval,
                 is_testnet=account.is_testnet,
@@ -194,6 +219,7 @@ async def _handle_ws_message(
             "action": action,
             "exchange_account_id": exchange_account_id,
             "exchange": key.exchange,
+            "market_type": key.market_type,
             "symbol": key.symbol,
             "interval": key.interval,
             "is_testnet": key.is_testnet,
@@ -201,6 +227,94 @@ async def _handle_ws_message(
     )
     if action == "subscribe_market":
         await market_data.send_subscription_status(user_id, key)
+
+
+async def _handle_public_market_ws_message(
+    *,
+    websocket: WebSocket,
+    connection_id: int,
+    market_data: MarketDataService,
+    raw_message: str,
+) -> None:
+    message = str(raw_message or "").strip()
+    if not message:
+        return
+    if message.lower() == "ping":
+        await websocket.send_json({"type": "pong"})
+        return
+
+    try:
+        payload = json.loads(message)
+    except json.JSONDecodeError:
+        await websocket.send_json({"type": "market_subscription_error", "message": "invalid_json"})
+        return
+    if not isinstance(payload, dict):
+        await websocket.send_json({"type": "market_subscription_error", "message": "invalid_message"})
+        return
+
+    action = str(payload.get("action") or payload.get("type") or "").strip().lower()
+    if action in {"ping", "pong"}:
+        await websocket.send_json({"type": "pong"})
+        return
+    if action not in {"subscribe_market", "unsubscribe_market"}:
+        return
+
+    exchange = str(payload.get("exchange") or "").strip().lower()
+    market_type = str(payload.get("market_type") or "spot").strip().lower()
+    symbol = str(payload.get("symbol") or "").strip()
+    interval = str(payload.get("interval") or "1m").strip()
+    if not exchange or not symbol:
+        await websocket.send_json(
+            {
+                "type": "market_subscription_error",
+                "action": action,
+                "message": "exchange and symbol are required",
+            }
+        )
+        return
+
+    try:
+        if action == "subscribe_market":
+            key = await market_data.subscribe_public(
+                connection_id=connection_id,
+                exchange=exchange,
+                market_type=market_type,
+                symbol=symbol,
+                interval=interval,
+                is_testnet=False,
+            )
+        else:
+            key = await market_data.unsubscribe_public(
+                connection_id=connection_id,
+                exchange=exchange,
+                market_type=market_type,
+                symbol=symbol,
+                interval=interval,
+                is_testnet=False,
+            )
+    except MarketDataError as exc:
+        await websocket.send_json(
+            {
+                "type": "market_subscription_error",
+                "action": action,
+                "message": str(exc),
+            }
+        )
+        return
+
+    await websocket.send_json(
+        {
+            "type": "market_subscription_ack",
+            "action": action,
+            "exchange": key.exchange,
+            "market_type": key.market_type,
+            "symbol": key.symbol,
+            "interval": key.interval,
+            "is_testnet": key.is_testnet,
+        }
+    )
+    if action == "subscribe_market":
+        await market_data.send_public_subscription_status(connection_id, key)
 
 
 def _get_owned_exchange_account(*, user_id: int, exchange_account_id: int) -> ExchangeAccount | None:

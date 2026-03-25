@@ -29,8 +29,21 @@ class User(Base, TimeStampedMixin):
     role: Mapped[str] = mapped_column(String(16), default="user", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     totp_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_totp_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Incremented on logout so previously issued JWTs and step-up tokens become invalid.
     token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class PendingRegistration(Base, TimeStampedMixin):
+    __tablename__ = "pending_registrations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    totp_secret_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    registration_token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
 
 
 class ExchangeAccount(Base, TimeStampedMixin):
@@ -54,10 +67,24 @@ class Strategy(Base, TimeStampedMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    template_key: Mapped[str] = mapped_column(String(64), nullable=False, default="custom")
     strategy_type: Mapped[str] = mapped_column(String(64), nullable=False)
     config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="stopped")
     runtime_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    user: Mapped[User] = relationship("User")
+
+
+class UserRecoveryCode(Base):
+    __tablename__ = "user_recovery_codes"
+    __table_args__ = (UniqueConstraint("user_id", "code_hash", name="uq_user_recovery_code_hash"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
     user: Mapped[User] = relationship("User")
 

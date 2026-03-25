@@ -1,284 +1,294 @@
 <template>
-  <AppShell>
+  <AppShell
+    title="Strategy Library"
+    subtitle="Browse template families, build strategy drafts or live-ready versions, keep old revisions, and switch runtime from the same workspace."
+  >
     <template #toolbar>
-      <el-button @click="toDashboard">Dashboard</el-button>
-      <el-button @click="resetEditor">New Strategy</el-button>
-      <el-button type="primary" @click="loadData" :loading="loading">Refresh</el-button>
+      <el-button @click="loadData" :loading="loading">Refresh</el-button>
+      <router-link class="aq-auth-link" to="/market">Open Market</router-link>
     </template>
 
-    <div class="aq-grid aq-grid-2 strategy-layout">
+    <StrategyCandleChart
+      :mode="chartMode"
+      :exchange-account-id="chartExchangeAccountId"
+      :exchange="chartExchange"
+      :market-type="chartMarketType"
+      :symbol="chartSymbol"
+      title="Strategy Context Chart"
+      subtitle="Use the selected instance or the editor context to preview market structure before saving or switching versions."
+      empty-message="Pick a template and symbol to preview the market."
+    />
+
+    <div class="aq-grid aq-grid-2 strategy-stage">
       <section class="aq-panel aq-fade-up">
         <div class="aq-title-row">
           <div>
-            <h2>Strategy Workspace</h2>
-            <p class="aq-subtitle">
-              Create new strategies, edit stopped ones, keep old versions, and choose which one to run.
-            </p>
+            <h2>Template Gallery</h2>
+            <p class="aq-subtitle">These templates are organized by trading posture, not just by runtime implementation.</p>
+          </div>
+        </div>
+        <div class="template-gallery">
+          <button
+            v-for="item in templates"
+            :key="item.template_key"
+            class="template-card"
+            :class="{ 'is-active': selectedTemplateKey === item.template_key }"
+            type="button"
+            @click="selectTemplate(item.template_key)"
+          >
+            <span class="template-state" :class="item.execution_status">
+              {{ item.execution_status === "live_supported" ? "Live" : "Draft" }}
+            </span>
+            <strong>{{ item.display_name }}</strong>
+            <small>{{ item.description }}</small>
+            <div class="template-meta">
+              <span>{{ item.category }}</span>
+              <span>{{ item.market_scope }}</span>
+              <span>{{ item.risk_level }}</span>
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <section class="aq-panel aq-fade-up">
+        <div class="aq-title-row">
+          <div>
+            <h2>My Strategy Instances</h2>
+            <p class="aq-subtitle">Saved strategies preserve versions. Draft-only templates can still be configured, cloned, and reviewed.</p>
           </div>
           <span class="aq-chip">{{ rows.length }} saved</span>
         </div>
 
         <el-alert
           v-if="feedbackMessage"
+          style="margin-top: 12px"
           :title="feedbackMessage"
           :type="feedbackType"
           show-icon
-          style="margin-top: 12px"
         />
+
+        <el-table
+          :data="rows"
+          style="margin-top: 14px"
+          v-loading="loading"
+          highlight-current-row
+          :row-class-name="rowClassName"
+          @row-click="selectStrategy"
+        >
+          <el-table-column prop="name" label="Name" min-width="180" />
+          <el-table-column prop="template_display_name" label="Template" min-width="160" />
+          <el-table-column label="Scope" width="110">
+            <template #default="{ row }">{{ row.market_scope }}</template>
+          </el-table-column>
+          <el-table-column label="Symbol" width="140">
+            <template #default="{ row }">{{ String(row.config.symbol || "-") }}</template>
+          </el-table-column>
+          <el-table-column label="Account" min-width="170">
+            <template #default="{ row }">{{ accountLabel(row.config.exchange_account_id) }}</template>
+          </el-table-column>
+          <el-table-column label="Status" width="110">
+            <template #default="{ row }">
+              <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="Run" width="110">
+            <template #default="{ row }">
+              <el-tag :type="row.live_supported ? 'success' : 'warning'">
+                {{ row.live_supported ? "Live" : "Draft" }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="Actions" min-width="340" fixed="right">
+            <template #default="{ row }">
+              <el-space wrap>
+                <el-button size="small" @click.stop="editStrategy(row)">Edit</el-button>
+                <el-button size="small" @click.stop="duplicateStrategy(row)">Duplicate</el-button>
+                <el-button size="small" @click.stop="inspectRuntime(row)">Runtime</el-button>
+                <el-button
+                  v-if="row.live_supported && isRunnable(row.status)"
+                  size="small"
+                  type="primary"
+                  :loading="actionLoadingId === row.id && actionMode === 'start'"
+                  @click.stop="startSelectedStrategy(row)"
+                >
+                  Start
+                </el-button>
+                <el-button
+                  v-else-if="row.live_supported"
+                  size="small"
+                  type="danger"
+                  :loading="actionLoadingId === row.id && actionMode === 'stop'"
+                  @click.stop="stopSelectedStrategy(row)"
+                >
+                  Stop
+                </el-button>
+                <el-button v-else size="small" disabled>Draft only</el-button>
+              </el-space>
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
+    </div>
+
+    <template #inspector>
+      <section class="aq-soft-block aq-stack">
+        <div class="aq-title-row">
+          <div>
+            <h3>Composer</h3>
+            <p class="aq-form-note">Template-driven editing replaces the old hardcoded grid/DCA form.</p>
+          </div>
+          <el-tag :type="editingStrategyId ? 'warning' : 'success'">
+            {{ editingStrategyId ? `Editing #${editingStrategyId}` : "New Instance" }}
+          </el-tag>
+        </div>
 
         <el-alert
           v-if="!accounts.length"
-          title="Create or sync an exchange account first before saving strategies."
+          title="Create or sync an exchange account before saving strategies."
           type="warning"
           show-icon
-          style="margin-top: 12px"
         />
 
-        <el-form label-width="160px" class="strategy-form">
-          <el-form-item label="Editor Mode">
-            <el-tag :type="editingStrategyId ? 'warning' : 'success'">
-              {{ editingStrategyId ? `Editing #${editingStrategyId}` : "Creating New" }}
-            </el-tag>
-          </el-form-item>
-          <el-form-item label="Strategy Name">
-            <el-input v-model="form.name" maxlength="128" show-word-limit />
-          </el-form-item>
-          <el-form-item label="Strategy Type">
-            <el-select v-model="form.strategy_type" style="width: 220px">
-              <el-option label="Grid" value="grid" />
-              <el-option label="DCA" value="dca" />
+        <el-form label-position="top" class="aq-stack">
+          <el-form-item label="Template">
+            <el-select v-model="selectedTemplateKey" style="width: 100%" @change="applySelectedTemplate">
+              <el-option v-for="item in templates" :key="item.template_key" :label="item.display_name" :value="item.template_key" />
             </el-select>
           </el-form-item>
-          <el-form-item label="Exchange Account">
-            <el-select v-model="form.exchange_account_id" style="width: 100%" filterable>
-              <el-option
-                v-for="account in accounts"
-                :key="account.id"
-                :label="`${account.account_alias} (${account.exchange})`"
-                :value="account.id"
+          <el-form-item label="Name">
+            <el-input v-model="form.name" maxlength="128" />
+          </el-form-item>
+          <el-form-item label="Chart Exchange">
+            <el-segmented v-model="editorExchange" :options="exchangeOptions" />
+          </el-form-item>
+          <el-form-item label="Chart Market Type">
+            <el-segmented v-model="editorMarketType" :options="marketTypeOptions" />
+          </el-form-item>
+
+          <template v-for="field in selectedTemplateFields" :key="field.key">
+            <el-form-item :label="field.label">
+              <el-select
+                v-if="field.key === 'exchange_account_id'"
+                v-model="form.config[field.key]"
+                filterable
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="account in accounts"
+                  :key="account.id"
+                  :label="`${account.account_alias} (${account.exchange})`"
+                  :value="account.id"
+                />
+              </el-select>
+
+              <el-select
+                v-else-if="field.input_type === 'select'"
+                v-model="form.config[field.key]"
+                style="width: 100%"
+              >
+                <el-option v-for="option in field.options" :key="option.value" :label="option.label" :value="option.value" />
+              </el-select>
+
+              <el-input-number
+                v-else-if="field.input_type === 'number'"
+                v-model="form.config[field.key]"
+                :min="field.min ?? undefined"
+                :max="field.max ?? undefined"
+                :step="Number(field.step ?? 1)"
+                :precision="field.precision ?? undefined"
+                style="width: 100%"
               />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Symbol">
-            <el-input v-model="form.symbol" placeholder="BTCUSDT" />
-          </el-form-item>
 
-          <template v-if="form.strategy_type === 'grid'">
-            <el-form-item label="Grid Count">
-              <el-input-number v-model="form.grid_count" :min="2" :max="1000" />
-            </el-form-item>
-            <el-form-item label="Grid Step %">
-              <el-input-number v-model="form.grid_step_pct" :min="0.0001" :max="100" :precision="4" />
-            </el-form-item>
-            <el-form-item label="Base Order Size">
-              <el-input-number v-model="form.base_order_size" :min="0.00000001" :precision="8" />
+              <el-switch v-else-if="field.input_type === 'switch'" v-model="form.config[field.key]" />
+
+              <el-input
+                v-else
+                v-model="form.config[field.key]"
+                :placeholder="field.description || field.label"
+              />
+
+              <div v-if="field.description" class="aq-form-note">{{ field.description }}</div>
             </el-form-item>
           </template>
 
-          <template v-else>
-            <el-form-item label="Cycle Seconds">
-              <el-input-number v-model="form.cycle_seconds" :min="1" :max="86400" />
-            </el-form-item>
-            <el-form-item label="Amount Per Cycle">
-              <el-input-number v-model="form.amount_per_cycle" :min="0.00000001" :precision="8" />
-            </el-form-item>
-          </template>
-
-          <el-form-item>
-            <el-space wrap>
-              <el-button type="primary" :loading="saveLoading" :disabled="!canSubmit" @click="saveStrategy">
-                {{ editingStrategyId ? "Save Changes" : "Create Strategy" }}
-              </el-button>
-              <el-button :loading="duplicateLoading" :disabled="!canSubmit" @click="saveAsNewStrategy">
-                Save As New Strategy
-              </el-button>
-              <el-button :disabled="!editingStrategyId" @click="resetEditor">Clear Editor</el-button>
-            </el-space>
-          </el-form-item>
+          <el-space wrap>
+            <el-button type="primary" :loading="saveLoading" :disabled="!canSubmit" @click="saveStrategy">
+              {{ editingStrategyId ? "Save Changes" : "Create Strategy" }}
+            </el-button>
+            <el-button :loading="duplicateLoading" :disabled="!canSubmit" @click="saveAsNewStrategy">Save As New</el-button>
+            <el-button @click="resetComposer">Reset</el-button>
+          </el-space>
         </el-form>
       </section>
 
-      <section class="aq-panel aq-fade-up">
-        <div class="aq-title-row">
-          <div>
-            <h2>Execution Control</h2>
-            <p class="aq-subtitle">
-              Start or stop any saved strategy after issuing a short-lived step-up token.
-            </p>
-          </div>
+      <section class="aq-soft-block aq-stack">
+        <div>
+          <h3>Runtime Control</h3>
+          <p class="aq-form-note">Starting or stopping a live-supported strategy still requires a fresh step-up token.</p>
         </div>
-
-        <el-form label-width="150px">
+        <el-form label-position="top">
           <el-form-item label="2FA Code">
-            <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter current 2FA code" />
+            <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter current Google Authenticator code" />
           </el-form-item>
           <el-form-item>
             <el-space wrap>
-              <el-button type="primary" :loading="stepUpLoading" @click="issueStepUpToken">Issue Control Token</el-button>
+              <el-button type="primary" :loading="stepUpLoading" @click="issueStepUpToken">Issue control token</el-button>
               <el-tag :type="stepUpTokenValid ? 'success' : 'info'">
-                {{ stepUpTokenValid ? `Token ready (${stepUpRemainingLabel})` : "No active token" }}
+                {{ stepUpTokenValid ? `Ready (${stepUpRemainingLabel})` : "No token" }}
               </el-tag>
             </el-space>
           </el-form-item>
         </el-form>
 
-        <el-descriptions v-if="selectedStrategy" :column="1" border size="small" style="margin-top: 12px">
-          <el-descriptions-item label="Selected Strategy">
-            #{{ selectedStrategy.id }} {{ selectedStrategy.name }}
-          </el-descriptions-item>
-          <el-descriptions-item label="Type">
-            {{ selectedStrategy.strategy_type }}
-          </el-descriptions-item>
+        <el-descriptions v-if="selectedStrategy" :column="1" border size="small">
+          <el-descriptions-item label="Selected">{{ selectedStrategy.name }}</el-descriptions-item>
+          <el-descriptions-item label="Template">{{ selectedStrategy.template_display_name }}</el-descriptions-item>
           <el-descriptions-item label="Status">
             <el-tag :type="statusType(selectedStrategy.status)">{{ selectedStrategy.status }}</el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="Config Summary">
-            {{ configSummary(selectedStrategy) }}
-          </el-descriptions-item>
         </el-descriptions>
 
-        <el-descriptions v-if="runtimeState && runtimeStrategyId === selectedStrategy?.id" :column="1" border size="small" style="margin-top: 12px">
-          <el-descriptions-item label="Runtime Ref">
-            {{ runtimeState.runtime_ref || "-" }}
-          </el-descriptions-item>
-          <el-descriptions-item label="Runtime Status">
-            {{ runtimeState.status }}
-          </el-descriptions-item>
-          <el-descriptions-item label="Last Heartbeat">
-            {{ runtimeState.last_heartbeat || "-" }}
-          </el-descriptions-item>
-          <el-descriptions-item label="Last Error">
-            {{ runtimeState.last_error || "-" }}
-          </el-descriptions-item>
-          <el-descriptions-item label="Execution Counters">
+        <el-descriptions v-if="runtimeState && runtimeStrategyId === selectedStrategy?.id" :column="1" border size="small">
+          <el-descriptions-item label="Runtime Ref">{{ runtimeState.runtime_ref || "-" }}</el-descriptions-item>
+          <el-descriptions-item label="Runtime Status">{{ runtimeState.status }}</el-descriptions-item>
+          <el-descriptions-item label="Last Error">{{ runtimeState.last_error || "-" }}</el-descriptions-item>
+          <el-descriptions-item label="Counters">
             submitted={{ runtimeState.order_submitted_count }}, updates={{ runtimeState.order_update_count }}, fills={{ runtimeState.trade_fill_count }}
           </el-descriptions-item>
         </el-descriptions>
       </section>
-    </div>
-
-    <div class="aq-panel aq-fade-up" style="margin-top: 18px">
-      <StrategyCandleChart
-        :exchange-account-id="selectedExchangeAccountId"
-        :exchange="selectedExchange"
-        :symbol="selectedSymbol"
-      />
-    </div>
-
-    <div class="aq-panel aq-fade-up" style="margin-top: 18px">
-      <div class="aq-title-row">
-        <div>
-          <h2>Saved Strategies</h2>
-          <p class="aq-subtitle">
-            Click a row to inspect it. Use Edit to change a stopped strategy, or Duplicate to keep the old one and create a variation.
-          </p>
-        </div>
-      </div>
-
-      <el-table
-        :data="rows"
-        style="margin-top: 14px"
-        v-loading="loading"
-        highlight-current-row
-        :row-class-name="rowClassName"
-        @row-click="selectStrategy"
-      >
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="Name" min-width="170" />
-        <el-table-column prop="strategy_type" label="Type" width="110" />
-        <el-table-column label="Symbol" width="140">
-          <template #default="scope">
-            {{ configValue(scope.row, "symbol") || "-" }}
-          </template>
-        </el-table-column>
-        <el-table-column label="Account" min-width="170">
-          <template #default="scope">
-            {{ accountLabel(configValue(scope.row, "exchange_account_id")) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="Config" min-width="260">
-          <template #default="scope">
-            {{ configSummary(scope.row) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="Status" width="120">
-          <template #default="scope">
-            <el-tag :type="statusType(scope.row.status)">{{ scope.row.status }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="runtime_ref" label="Runtime Ref" min-width="170" />
-        <el-table-column label="Actions" width="390" fixed="right">
-          <template #default="scope">
-            <div class="action-row">
-              <el-button size="small" @click.stop="editStrategy(scope.row)">Edit</el-button>
-              <el-button size="small" @click.stop="duplicateStrategy(scope.row)">Duplicate</el-button>
-              <el-button size="small" @click.stop="inspectRuntime(scope.row)">Runtime</el-button>
-              <el-button
-                v-if="isRunnable(scope.row.status)"
-                size="small"
-                type="primary"
-                :loading="actionLoadingId === scope.row.id && actionMode === 'start'"
-                @click.stop="startSelectedStrategy(scope.row)"
-              >
-                Start
-              </el-button>
-              <el-button
-                v-else
-                size="small"
-                type="danger"
-                :loading="actionLoadingId === scope.row.id && actionMode === 'stop'"
-                @click.stop="stopSelectedStrategy(scope.row)"
-              >
-                Stop
-              </el-button>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-empty v-if="!loading && !rows.length" description="No strategies yet" style="padding-top: 18px" />
-    </div>
+    </template>
   </AppShell>
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, reactive, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onMounted, reactive, ref } from "vue";
+import { useRoute } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import StrategyCandleChart from "../components/StrategyCandleChart.vue";
 import {
   createStrategy,
   ensureSession,
+  getErrorMessage,
   getStrategyRuntime,
   listExchangeAccounts,
   listStrategies,
+  listStrategyTemplates,
   requestStepUpToken,
   startStrategy as startStrategyRequest,
   stopStrategy as stopStrategyRequest,
   updateStrategy,
   type ExchangeAccountItem,
   type StrategyItem,
-  type StrategyRuntime
+  type StrategyRuntime,
+  type StrategyTemplateItem
 } from "../api";
 
-const StrategyCandleChart = defineAsyncComponent(() => import("../components/StrategyCandleChart.vue"));
+const route = useRoute();
 
-type EditableStrategyType = "grid" | "dca";
-
-type StrategyEditorState = {
-  name: string;
-  strategy_type: EditableStrategyType;
-  exchange_account_id: number | null;
-  symbol: string;
-  grid_count: number;
-  grid_step_pct: number;
-  base_order_size: number;
-  cycle_seconds: number;
-  amount_per_cycle: number;
-};
-
-const router = useRouter();
 const rows = ref<StrategyItem[]>([]);
 const accounts = ref<ExchangeAccountItem[]>([]);
+const templates = ref<StrategyTemplateItem[]>([]);
 const loading = ref(false);
 const saveLoading = ref(false);
 const duplicateLoading = ref(false);
@@ -294,32 +304,30 @@ const runtimeStrategyId = ref<number | null>(null);
 const stepUpCode = ref("");
 const stepUpToken = ref("");
 const stepUpExpireAt = ref<number | null>(null);
+const selectedTemplateKey = ref("spot_grid");
+const editorExchange = ref<"binance" | "okx">((String(route.query.exchange || "binance").toLowerCase() === "okx" ? "okx" : "binance"));
+const editorMarketType = ref<"spot" | "perp">(String(route.query.market_type || "spot").toLowerCase() === "perp" ? "perp" : "spot");
 
-const form = reactive<StrategyEditorState>({
-  name: "grid-alpha",
-  strategy_type: "grid",
-  exchange_account_id: null,
-  symbol: "BTCUSDT",
-  grid_count: 20,
-  grid_step_pct: 0.4,
-  base_order_size: 0.001,
-  cycle_seconds: 300,
-  amount_per_cycle: 10
+const form = reactive<{
+  name: string;
+  config: Record<string, any>;
+}>({
+  name: "spot-grid-alpha",
+  config: {}
 });
+
+const exchangeOptions = [
+  { label: "Binance", value: "binance" },
+  { label: "OKX", value: "okx" }
+] as const;
+const marketTypeOptions = [
+  { label: "Spot", value: "spot" },
+  { label: "Perp", value: "perp" }
+] as const;
 
 const selectedStrategy = computed(() => rows.value.find((item) => item.id === selectedStrategyId.value) || null);
-const selectedExchangeAccountId = computed(() => {
-  const value = Number(selectedStrategy.value?.config?.exchange_account_id || 0);
-  return value > 0 ? value : null;
-});
-const selectedExchange = computed(() => {
-  const account = accounts.value.find((item) => item.id === selectedExchangeAccountId.value);
-  return account?.exchange || null;
-});
-const selectedSymbol = computed(() => {
-  const symbol = String(selectedStrategy.value?.config?.symbol || "").trim().toUpperCase();
-  return symbol || null;
-});
+const selectedTemplate = computed(() => templates.value.find((item) => item.template_key === selectedTemplateKey.value) || null);
+const selectedTemplateFields = computed(() => selectedTemplate.value?.fields || []);
 const stepUpTokenValid = computed(() => Boolean(stepUpToken.value && stepUpExpireAt.value && stepUpExpireAt.value > Date.now()));
 const stepUpRemainingLabel = computed(() => {
   if (!stepUpExpireAt.value) {
@@ -327,55 +335,43 @@ const stepUpRemainingLabel = computed(() => {
   }
   return `${Math.max(Math.floor((stepUpExpireAt.value - Date.now()) / 1000), 0)}s`;
 });
-const canSubmit = computed(() => {
-  return Boolean(form.name.trim() && form.symbol.trim() && form.exchange_account_id);
+const chartMode = computed<"private" | "public">(() => (chartExchangeAccountId.value ? "private" : "public"));
+const chartExchangeAccountId = computed(() => {
+  const strategyAccountId = Number(selectedStrategy.value?.config?.exchange_account_id || 0);
+  const editorAccountId = Number(form.config.exchange_account_id || 0);
+  const resolved = strategyAccountId || editorAccountId;
+  return resolved > 0 ? resolved : null;
 });
+const chartExchange = computed(() => {
+  const account = accounts.value.find((item) => item.id === chartExchangeAccountId.value);
+  return account?.exchange || editorExchange.value;
+});
+const chartSymbol = computed(() => {
+  const rowSymbol = String(selectedStrategy.value?.config?.symbol || "").trim().toUpperCase();
+  const formSymbol = String(form.config.symbol || "").trim().toUpperCase();
+  return rowSymbol || formSymbol || String(route.query.symbol || "").trim().toUpperCase() || null;
+});
+const chartMarketType = computed<"spot" | "perp">(() => {
+  const scope = selectedStrategy.value?.market_scope || selectedTemplate.value?.market_scope || editorMarketType.value;
+  return scope === "perp" ? "perp" : editorMarketType.value;
+});
+const canSubmit = computed(() => Boolean(form.name.trim() && selectedTemplateKey.value && form.config.exchange_account_id && form.config.symbol));
 
 function setFeedback(message: string, type: "success" | "warning" | "error" | "info" = "info") {
   feedbackMessage.value = message;
   feedbackType.value = type;
 }
 
-async function ensureSessionOrRedirect() {
-  try {
-    await ensureSession();
-  } catch {
-    router.push("/login");
-    throw new Error("Login expired. Please sign in again.");
-  }
+function statusType(status: string) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "running") return "success";
+  if (normalized === "failed") return "danger";
+  if (normalized === "starting" || normalized === "stopping") return "warning";
+  return "info";
 }
 
-function ensureStepUpToken() {
-  if (!stepUpTokenValid.value) {
-    throw new Error("Issue a fresh control token before starting or stopping a strategy.");
-  }
-  return stepUpToken.value;
-}
-
-function resetEditor() {
-  editingStrategyId.value = null;
-  form.name = "grid-alpha";
-  form.strategy_type = "grid";
-  form.symbol = "BTCUSDT";
-  form.grid_count = 20;
-  form.grid_step_pct = 0.4;
-  form.base_order_size = 0.001;
-  form.cycle_seconds = 300;
-  form.amount_per_cycle = 10;
-  form.exchange_account_id = accounts.value[0]?.id ?? null;
-  setFeedback("Editor reset. You can now create a fresh strategy.", "info");
-}
-
-function toDashboard() {
-  router.push("/dashboard");
-}
-
-function isEditableType(strategyType: string): strategyType is EditableStrategyType {
-  return strategyType === "grid" || strategyType === "dca";
-}
-
-function configValue(row: StrategyItem, key: string) {
-  return row.config?.[key];
+function isRunnable(status: string) {
+  return !["running", "starting", "stopping"].includes(String(status || "").toLowerCase());
 }
 
 function accountLabel(accountId: unknown) {
@@ -384,234 +380,173 @@ function accountLabel(accountId: unknown) {
   return account ? `${account.account_alias} (${account.exchange})` : id ? `Account #${id}` : "-";
 }
 
-function configSummary(row: StrategyItem) {
-  const symbol = String(configValue(row, "symbol") || "-");
-  if (row.strategy_type === "grid") {
-    return `symbol=${symbol}, grids=${configValue(row, "grid_count") || "-"}, step=${configValue(row, "grid_step_pct") || "-"}%, size=${configValue(row, "base_order_size") || "-"}`;
-  }
-  if (row.strategy_type === "dca") {
-    return `symbol=${symbol}, cycle=${configValue(row, "cycle_seconds") || "-"}s, amount=${configValue(row, "amount_per_cycle") || "-"}`;
-  }
-  return JSON.stringify(row.config || {});
-}
-
 function rowClassName({ row }: { row: StrategyItem }) {
   return row.id === selectedStrategyId.value ? "is-selected-row" : "";
 }
 
-function statusType(status: string) {
-  const normalized = String(status || "").toLowerCase();
-  if (normalized === "running") {
-    return "success";
+function buildDefaultConfig(template: StrategyTemplateItem) {
+  const nextConfig: Record<string, any> = {};
+  for (const field of template.fields) {
+    nextConfig[field.key] = field.default ?? (field.input_type === "switch" ? false : "");
   }
-  if (normalized === "failed") {
-    return "danger";
-  }
-  if (normalized === "starting" || normalized === "stopping") {
-    return "warning";
-  }
-  return "info";
+  nextConfig.symbol = String(route.query.symbol || nextConfig.symbol || "BTCUSDT").toUpperCase();
+  nextConfig.exchange_account_id = accounts.value[0]?.id ?? nextConfig.exchange_account_id ?? null;
+  return nextConfig;
 }
 
-function isRunnable(status: string) {
-  return !["running", "starting", "stopping"].includes(String(status || "").toLowerCase());
+function applySelectedTemplate() {
+  const template = selectedTemplate.value;
+  if (!template) {
+    return;
+  }
+  form.name = template.template_key === "dca" ? "dca-alpha" : `${template.template_key}-alpha`;
+  form.config = buildDefaultConfig(template);
+}
+
+function resetComposer() {
+  editingStrategyId.value = null;
+  applySelectedTemplate();
+  setFeedback("Composer reset to the selected template.", "info");
+}
+
+function selectTemplate(templateKey: string) {
+  selectedTemplateKey.value = templateKey;
+  resetComposer();
 }
 
 function selectStrategy(row: StrategyItem) {
   selectedStrategyId.value = row.id;
 }
 
-function loadEditorFromStrategy(row: StrategyItem, { duplicate = false }: { duplicate?: boolean } = {}) {
-  if (!isEditableType(row.strategy_type)) {
-    setFeedback(`The web editor currently supports grid and dca only. Strategy "${row.name}" stays view-only.`, "warning");
-    return;
-  }
-
-  editingStrategyId.value = duplicate ? null : row.id;
-  form.name = duplicate ? `${row.name}-copy` : row.name;
-  form.strategy_type = row.strategy_type;
-  form.exchange_account_id = Number(configValue(row, "exchange_account_id") || accounts.value[0]?.id || 0) || null;
-  form.symbol = String(configValue(row, "symbol") || "BTCUSDT");
-  form.grid_count = Number(configValue(row, "grid_count") || 20);
-  form.grid_step_pct = Number(configValue(row, "grid_step_pct") || 0.4);
-  form.base_order_size = Number(configValue(row, "base_order_size") || 0.001);
-  form.cycle_seconds = Number(configValue(row, "cycle_seconds") || 300);
-  form.amount_per_cycle = Number(configValue(row, "amount_per_cycle") || 10);
-  selectedStrategyId.value = row.id;
-  setFeedback(
-    duplicate
-      ? `Loaded strategy #${row.id} into the editor. Save it as a new strategy to keep the original.`
-      : `Loaded strategy #${row.id} for editing.`,
-    "info"
-  );
-}
-
 function editStrategy(row: StrategyItem) {
-  if (!isRunnable(row.status)) {
-    setFeedback(`Strategy #${row.id} is currently active. Stop it before editing, or duplicate it into a new version.`, "warning");
-    return;
-  }
-  loadEditorFromStrategy(row, { duplicate: false });
+  selectedStrategyId.value = row.id;
+  editingStrategyId.value = row.id;
+  selectedTemplateKey.value = row.template_key;
+  form.name = row.name;
+  form.config = { ...row.config };
 }
 
 function duplicateStrategy(row: StrategyItem) {
-  loadEditorFromStrategy(row, { duplicate: true });
+  selectedStrategyId.value = row.id;
+  editingStrategyId.value = null;
+  selectedTemplateKey.value = row.template_key;
+  form.name = `${row.name}-copy`;
+  form.config = { ...row.config };
+  setFeedback("Loaded the selected strategy into the composer as a new version.", "info");
 }
 
-function buildPayload() {
-  const exchangeAccountId = Number(form.exchange_account_id || 0);
-  const symbol = form.symbol.trim().toUpperCase();
-  if (!form.name.trim()) {
-    throw new Error("Strategy name is required.");
+async function ensureStepUpToken() {
+  if (!stepUpTokenValid.value) {
+    throw new Error("Issue a fresh control token before starting or stopping a strategy.");
   }
-  if (!exchangeAccountId) {
-    throw new Error("Select an exchange account first.");
-  }
-  if (!symbol) {
-    throw new Error("Symbol is required.");
-  }
-
-  const config: Record<string, unknown> = {
-    exchange_account_id: exchangeAccountId,
-    symbol
-  };
-  if (form.strategy_type === "grid") {
-    config.grid_count = Number(form.grid_count);
-    config.grid_step_pct = Number(form.grid_step_pct);
-    config.base_order_size = Number(form.base_order_size);
-  } else {
-    config.cycle_seconds = Number(form.cycle_seconds);
-    config.amount_per_cycle = Number(form.amount_per_cycle);
-  }
-
-  return {
-    name: form.name.trim(),
-    strategy_type: form.strategy_type,
-    config
-  };
+  return stepUpToken.value;
 }
 
 async function loadData() {
+  loading.value = true;
   try {
-    loading.value = true;
-    await ensureSessionOrRedirect();
-    const [strategies, exchangeAccounts] = await Promise.all([
+    await ensureSession();
+    const [templatesData, strategyData, accountData] = await Promise.all([
+      listStrategyTemplates(),
       listStrategies(),
       listExchangeAccounts()
     ]);
-    rows.value = strategies;
-    accounts.value = exchangeAccounts;
-    if (!form.exchange_account_id) {
-      form.exchange_account_id = exchangeAccounts[0]?.id ?? null;
+    templates.value = templatesData;
+    rows.value = strategyData;
+    accounts.value = accountData;
+    if (!selectedTemplate.value && templates.value.length) {
+      selectedTemplateKey.value = String(route.query.template || templates.value[0].template_key);
     }
-    if (selectedStrategyId.value && !strategies.some((item) => item.id === selectedStrategyId.value)) {
-      selectedStrategyId.value = null;
-      runtimeState.value = null;
-      runtimeStrategyId.value = null;
-    }
-    if (!selectedStrategyId.value && strategies.length) {
-      selectedStrategyId.value = strategies[0].id;
+    if (!Object.keys(form.config).length) {
+      applySelectedTemplate();
     }
   } catch (error: any) {
-    setFeedback(error?.response?.data?.detail || "Failed to load strategies or exchange accounts.", "error");
+    setFeedback(getErrorMessage(error, "Failed to load strategy workspace."), "error");
   } finally {
     loading.value = false;
   }
 }
 
-async function saveStrategy() {
+async function issueStepUpToken() {
+  if (!/^\d{6}$/.test(stepUpCode.value.trim())) {
+    setFeedback("Enter a valid 6-digit Google Authenticator code.", "warning");
+    return;
+  }
+  stepUpLoading.value = true;
   try {
-    saveLoading.value = true;
-    await ensureSessionOrRedirect();
+    const data = await requestStepUpToken(stepUpCode.value.trim());
+    stepUpToken.value = data.step_up_token;
+    stepUpExpireAt.value = Date.now() + (data.expires_in_seconds || 0) * 1000;
+    setFeedback("Control token issued.", "success");
+  } catch (error: any) {
+    setFeedback(getErrorMessage(error, "Failed to issue control token."), "error");
+  } finally {
+    stepUpLoading.value = false;
+  }
+}
+
+function buildStrategyPayload() {
+  return {
+    name: form.name.trim(),
+    template_key: selectedTemplateKey.value,
+    config: { ...form.config }
+  };
+}
+
+async function saveStrategy() {
+  saveLoading.value = true;
+  try {
     const wasEditing = Boolean(editingStrategyId.value);
-    const payload = buildPayload();
-    const strategy = editingStrategyId.value
+    const payload = buildStrategyPayload();
+    const saved = editingStrategyId.value
       ? await updateStrategy(editingStrategyId.value, payload)
       : await createStrategy(payload);
     await loadData();
-    selectedStrategyId.value = strategy.id;
-    if (!editingStrategyId.value) {
-      editingStrategyId.value = strategy.id;
-    }
-    setFeedback(
-      wasEditing
-        ? `Strategy #${strategy.id} saved successfully.`
-        : `Strategy #${strategy.id} created successfully.`,
-      "success"
-    );
+    selectedStrategyId.value = saved.id;
+    editingStrategyId.value = saved.id;
+    setFeedback(wasEditing ? "Strategy updated." : "Strategy created.", "success");
   } catch (error: any) {
-    setFeedback(error?.response?.data?.detail || error?.message || "Failed to save strategy.", "error");
+    setFeedback(getErrorMessage(error, "Failed to save strategy."), "error");
   } finally {
     saveLoading.value = false;
   }
 }
 
 async function saveAsNewStrategy() {
+  duplicateLoading.value = true;
   try {
-    duplicateLoading.value = true;
-    await ensureSessionOrRedirect();
-    const strategy = await createStrategy(buildPayload());
+    const saved = await createStrategy(buildStrategyPayload());
     await loadData();
-    selectedStrategyId.value = strategy.id;
-    editingStrategyId.value = null;
-    setFeedback(`Strategy #${strategy.id} created as a new version. The old strategy was kept untouched.`, "success");
+    selectedStrategyId.value = saved.id;
+    editingStrategyId.value = saved.id;
+    setFeedback("Saved as a new strategy version.", "success");
   } catch (error: any) {
-    setFeedback(error?.response?.data?.detail || error?.message || "Failed to create a new strategy version.", "error");
+    setFeedback(getErrorMessage(error, "Failed to save as new strategy."), "error");
   } finally {
     duplicateLoading.value = false;
   }
 }
 
-async function issueStepUpToken() {
-  if (!stepUpCode.value.trim()) {
-    setFeedback("Enter a current 2FA code first.", "warning");
-    return;
-  }
-  try {
-    stepUpLoading.value = true;
-    await ensureSessionOrRedirect();
-    const response = await requestStepUpToken(stepUpCode.value.trim());
-    stepUpToken.value = response.step_up_token;
-    stepUpExpireAt.value = Date.now() + response.expires_in_seconds * 1000;
-    setFeedback("Control token issued. You can now start or stop strategies.", "success");
-  } catch (error: any) {
-    stepUpToken.value = "";
-    stepUpExpireAt.value = null;
-    setFeedback(error?.response?.data?.detail || "Failed to issue control token.", "error");
-  } finally {
-    stepUpLoading.value = false;
-  }
-}
-
 async function inspectRuntime(row: StrategyItem) {
+  selectedStrategyId.value = row.id;
   try {
-    actionLoadingId.value = row.id;
-    actionMode.value = null;
-    await ensureSessionOrRedirect();
     runtimeState.value = await getStrategyRuntime(row.id);
     runtimeStrategyId.value = row.id;
-    selectedStrategyId.value = row.id;
-    setFeedback(`Runtime snapshot loaded for strategy #${row.id}.`, "info");
   } catch (error: any) {
-    setFeedback(error?.response?.data?.detail || "Failed to load runtime state.", "error");
-  } finally {
-    actionLoadingId.value = null;
+    setFeedback(getErrorMessage(error, "Failed to load runtime state."), "error");
   }
 }
 
 async function startSelectedStrategy(row: StrategyItem) {
+  actionLoadingId.value = row.id;
+  actionMode.value = "start";
   try {
-    actionLoadingId.value = row.id;
-    actionMode.value = "start";
-    await ensureSessionOrRedirect();
-    const runtime = await startStrategyRequest(row.id, ensureStepUpToken());
-    runtimeState.value = runtime;
+    runtimeState.value = await startStrategyRequest(row.id, await ensureStepUpToken());
     runtimeStrategyId.value = row.id;
-    selectedStrategyId.value = row.id;
     await loadData();
-    setFeedback(`Strategy #${row.id} started. It is now the active runtime you selected to use.`, "success");
+    setFeedback("Strategy started.", "success");
   } catch (error: any) {
-    setFeedback(error?.response?.data?.detail || error?.message || "Failed to start strategy.", "error");
+    setFeedback(getErrorMessage(error, "Failed to start strategy."), "error");
   } finally {
     actionLoadingId.value = null;
     actionMode.value = null;
@@ -619,48 +554,101 @@ async function startSelectedStrategy(row: StrategyItem) {
 }
 
 async function stopSelectedStrategy(row: StrategyItem) {
+  actionLoadingId.value = row.id;
+  actionMode.value = "stop";
   try {
-    actionLoadingId.value = row.id;
-    actionMode.value = "stop";
-    await ensureSessionOrRedirect();
-    const runtime = await stopStrategyRequest(row.id, ensureStepUpToken());
-    runtimeState.value = runtime;
+    runtimeState.value = await stopStrategyRequest(row.id, await ensureStepUpToken());
     runtimeStrategyId.value = row.id;
-    selectedStrategyId.value = row.id;
     await loadData();
-    setFeedback(`Strategy #${row.id} stopped. You can now edit it or start another saved strategy.`, "success");
+    setFeedback("Strategy stopped.", "success");
   } catch (error: any) {
-    setFeedback(error?.response?.data?.detail || error?.message || "Failed to stop strategy.", "error");
+    setFeedback(getErrorMessage(error, "Failed to stop strategy."), "error");
   } finally {
     actionLoadingId.value = null;
     actionMode.value = null;
   }
 }
 
-onMounted(async () => {
-  await loadData();
-  if (rows.value.length) {
-    selectedStrategyId.value = rows.value[0].id;
-  }
-});
+onMounted(loadData);
 </script>
 
 <style scoped>
-.strategy-layout {
+.strategy-stage {
   align-items: start;
 }
 
-.strategy-form {
+.template-gallery {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: 14px;
 }
 
-.action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.template-card {
+  text-align: left;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--aq-border);
+  background: linear-gradient(180deg, rgba(18, 28, 43, 0.96) 0%, rgba(10, 18, 29, 0.98) 100%);
+  color: var(--aq-ink);
+  cursor: pointer;
+  transition: 180ms ease;
 }
 
-:deep(.is-selected-row) {
-  --el-table-tr-bg-color: rgba(18, 78, 120, 0.08);
+.template-card:hover,
+.template-card.is-active {
+  border-color: var(--aq-border-strong);
+  transform: translateY(-2px);
+}
+
+.template-card strong {
+  display: block;
+  margin-top: 10px;
+  color: var(--aq-ink-strong);
+}
+
+.template-card small {
+  display: block;
+  margin-top: 8px;
+  color: var(--aq-ink-soft);
+  line-height: 1.6;
+}
+
+.template-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  color: var(--aq-ink-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.template-state {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.template-state.live_supported {
+  color: #02170e;
+  background: #16d1a7;
+}
+
+.template-state.draft_only {
+  color: #1d1400;
+  background: var(--aq-warning);
+}
+
+@media (max-width: 960px) {
+  .template-gallery {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

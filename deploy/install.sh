@@ -279,9 +279,6 @@ generate_env_file() {
   set_env_value "JWT_SECRET" "$jwt_secret"
   set_env_value "SUPERVISOR_SHARED_TOKEN" "$supervisor_token"
   set_env_value "AES_MASTER_KEY" "$aes_master_key"
-  set_env_value "AUTH_COOKIE_SECURE" "1"
-  set_env_value "TRUST_PROXY_HEADERS" "1"
-  set_env_value "CORS_ALLOWED_ORIGINS" "https://localhost,https://127.0.0.1"
   set_env_value "A1PHQUEST_HTTP_PORT" "80"
   set_env_value "A1PHQUEST_HTTPS_PORT" "443"
 
@@ -327,14 +324,25 @@ existing_env_requires_regeneration() {
 ensure_existing_env_defaults() {
   set_env_value_if_missing "ENVIRONMENT" "prod"
   set_env_value_if_missing "API_HOST" "0.0.0.0"
-  set_env_value_if_missing "AUTH_COOKIE_SECURE" "1"
-  set_env_value_if_missing "TRUST_PROXY_HEADERS" "1"
   set_env_value_if_missing "A1PHQUEST_HTTP_PORT" "80"
   set_env_value_if_missing "A1PHQUEST_HTTPS_PORT" "443"
   remove_env_key "BOOTSTRAP_ADMIN_ENABLED"
   remove_env_key "BOOTSTRAP_ADMIN_USERNAME"
   remove_env_key "BOOTSTRAP_ADMIN_EMAIL"
   remove_env_key "BOOTSTRAP_ADMIN_PASSWORD"
+}
+
+sync_transport_settings() {
+  if [ "$DEPLOY_NGINX" = "1" ]; then
+    set_env_value "AUTH_COOKIE_SECURE" "1"
+    set_env_value "TRUST_PROXY_HEADERS" "1"
+    set_env_value "CORS_ALLOWED_ORIGINS" "https://localhost,https://127.0.0.1"
+    return
+  fi
+
+  set_env_value "AUTH_COOKIE_SECURE" "0"
+  set_env_value "TRUST_PROXY_HEADERS" "0"
+  set_env_value "CORS_ALLOWED_ORIGINS" "http://localhost:5173,http://127.0.0.1:5173"
 }
 
 ensure_env_file() {
@@ -352,6 +360,7 @@ ensure_env_file() {
     fi
     ensure_existing_env_defaults
   fi
+  sync_transport_settings
 }
 
 reset_existing_state_if_requested() {

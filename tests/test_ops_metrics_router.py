@@ -66,7 +66,7 @@ def test_get_ops_metrics_returns_runtime_and_ws_counts(async_runner):
         )
         db.commit()
 
-        ws_manager = WsManager()
+        ws_manager = WsManager(backend="memory")
         async_runner(ws_manager.push_to_user(user.id, {"type": "runtime"}))
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ws_manager=ws_manager)))
         result = get_ops_metrics(request=request, db=db, current_user=user)

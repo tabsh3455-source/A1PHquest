@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     access_token_expire_minutes: int = Field(default=60, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     step_up_token_expire_minutes: int = Field(default=10, alias="STEP_UP_TOKEN_EXPIRE_MINUTES")
+    registration_token_expire_minutes: int = Field(default=15, alias="REGISTRATION_TOKEN_EXPIRE_MINUTES")
     security_strict_mode: bool = Field(default=True, alias="SECURITY_STRICT_MODE")
     auth_cookie_name: str = Field(default="a1phquest_access", alias="AUTH_COOKIE_NAME")
     auth_cookie_domain: str = Field(default="", alias="AUTH_COOKIE_DOMAIN")

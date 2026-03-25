@@ -22,6 +22,7 @@ class _FakeMarketDataService:
         self.calls.append(("subscribe", kwargs))
         return MarketStreamKey(
             exchange=kwargs["exchange"],
+            market_type=kwargs.get("market_type", "spot"),
             symbol="BTCUSDT",
             interval="1m",
             is_testnet=bool(kwargs["is_testnet"]),
@@ -31,6 +32,7 @@ class _FakeMarketDataService:
         self.calls.append(("unsubscribe", kwargs))
         return MarketStreamKey(
             exchange=kwargs["exchange"],
+            market_type=kwargs.get("market_type", "spot"),
             symbol="BTCUSDT",
             interval="1m",
             is_testnet=bool(kwargs["is_testnet"]),

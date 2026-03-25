@@ -1,11 +1,9 @@
 <template>
-  <div class="chart-panel">
+  <section class="aq-panel chart-shell">
     <div class="chart-toolbar">
       <div>
-        <h2>Live Candles</h2>
-        <p class="aq-subtitle">
-          Historical candles come from the market API, then the current bar keeps updating over WebSocket.
-        </p>
+        <h2>{{ title }}</h2>
+        <p class="aq-subtitle">{{ subtitle }}</p>
       </div>
       <div class="chart-toolbar-actions">
         <el-select v-model="selectedInterval" size="small" style="width: 104px" @change="reloadChart">
@@ -17,25 +15,23 @@
 
     <div class="chart-meta">
       <span>{{ exchangeLabel }}</span>
+      <span>{{ marketTypeLabel }}</span>
       <span>{{ displaySymbol }}</span>
       <span v-if="lastPriceLabel">Last {{ lastPriceLabel }}</span>
     </div>
 
-    <el-alert
-      v-if="errorMessage"
-      :title="errorMessage"
-      type="error"
-      show-icon
-      style="margin-top: 12px"
-    />
+    <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon style="margin-top: 12px" />
 
     <div v-loading="loading" class="chart-surface">
-      <div v-if="!isReady" class="chart-empty">
-        Select a Binance or OKX strategy to load its market candles.
+      <div v-if="!isReady" class="aq-empty-state">
+        <div>
+          <strong>Waiting for market scope</strong>
+          <p>Select an exchange and symbol to load live candles.</p>
+        </div>
       </div>
       <div v-else ref="chartRoot" class="chart-root" />
     </div>
-  </div>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -47,13 +43,32 @@ import {
   type UTCTimestamp
 } from "lightweight-charts";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { API_BASE, getMarketKlines, type MarketKlineItem } from "../api";
+import {
+  API_BASE,
+  getMarketKlines,
+  getPublicMarketKlines,
+  type MarketKlineItem
+} from "../api";
 
-const props = defineProps<{
-  exchangeAccountId: number | null;
-  exchange: string | null;
-  symbol: string | null;
-}>();
+const props = withDefaults(defineProps<{
+  mode?: "private" | "public";
+  exchangeAccountId?: number | null;
+  exchange?: string | null;
+  marketType?: "spot" | "perp";
+  symbol?: string | null;
+  title?: string;
+  subtitle?: string;
+  emptyMessage?: string;
+}>(), {
+  mode: "private",
+  exchangeAccountId: null,
+  exchange: null,
+  marketType: "spot",
+  symbol: null,
+  title: "Live Candles",
+  subtitle: "Historical candles load first, then the current bar keeps streaming.",
+  emptyMessage: "Select a market scope to load candles."
+});
 
 const intervals = ["1m", "5m", "15m", "1h"];
 const selectedInterval = ref("1m");
@@ -63,9 +78,16 @@ const errorMessage = ref("");
 const connectionState = ref<"idle" | "connecting" | "live" | "reconnecting" | "stale" | "error">("idle");
 const lastPriceLabel = ref("");
 
-const isReady = computed(() => Boolean(props.exchangeAccountId && props.symbol));
+const isPublic = computed(() => props.mode === "public");
+const isReady = computed(() => {
+  if (isPublic.value) {
+    return Boolean(props.exchange && props.symbol);
+  }
+  return Boolean(props.exchangeAccountId && props.exchange && props.symbol);
+});
 const displaySymbol = computed(() => String(props.symbol || "-"));
 const exchangeLabel = computed(() => String(props.exchange || "-").toUpperCase());
+const marketTypeLabel = computed(() => String(props.marketType || "spot").toUpperCase());
 const connectionLabel = computed(() => {
   if (connectionState.value === "live") {
     return "WS live";
@@ -91,11 +113,7 @@ const connectionTagType = computed(() => {
   if (connectionState.value === "error") {
     return "danger";
   }
-  if (
-    connectionState.value === "connecting" ||
-    connectionState.value === "reconnecting" ||
-    connectionState.value === "stale"
-  ) {
+  if (["connecting", "reconnecting", "stale"].includes(connectionState.value)) {
     return "warning";
   }
   return "info";
@@ -107,22 +125,31 @@ let socket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let pingTimer: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
-let activeSubscription: { exchangeAccountId: number; symbol: string; interval: string } | null = null;
+let activeSubscription: Record<string, unknown> | null = null;
+
+function buildWsUrl() {
+  const url = new URL(API_BASE);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = isPublic.value ? "/ws/market" : "/ws/events";
+  url.search = "";
+  return url.toString();
+}
 
 function currentSubscription() {
+  if (isPublic.value) {
+    return {
+      exchange: String(props.exchange || "").toLowerCase(),
+      market_type: props.marketType,
+      symbol: displaySymbol.value,
+      interval: selectedInterval.value
+    };
+  }
   return {
-    exchangeAccountId: Number(props.exchangeAccountId || 0),
+    exchange_account_id: Number(props.exchangeAccountId || 0),
+    market_type: props.marketType,
     symbol: displaySymbol.value,
     interval: selectedInterval.value
   };
-}
-
-function buildEventsWsUrl() {
-  const url = new URL(API_BASE);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = "/ws/events";
-  url.search = "";
-  return url.toString();
 }
 
 function toChartPoint(item: MarketKlineItem): CandlestickData {
@@ -140,40 +167,39 @@ function ensureChart() {
     return;
   }
   chart = createChart(chartRoot.value, {
-    height: 360,
+    height: 420,
     layout: {
-      background: { color: "#ffffff" },
-      textColor: "#2e3f56"
+      background: { color: "#0a111b" },
+      textColor: "#b9cae6"
     },
     grid: {
-      vertLines: { color: "#edf3fb" },
-      horzLines: { color: "#edf3fb" }
+      vertLines: { color: "rgba(144, 166, 203, 0.08)" },
+      horzLines: { color: "rgba(144, 166, 203, 0.08)" }
     },
     rightPriceScale: {
-      borderColor: "#d7e3f2"
+      borderColor: "rgba(144, 166, 203, 0.18)"
     },
     timeScale: {
-      borderColor: "#d7e3f2",
+      borderColor: "rgba(144, 166, 203, 0.18)",
       timeVisible: true,
       secondsVisible: false
     },
     crosshair: {
-      vertLine: { color: "#7ca5d9" },
-      horzLine: { color: "#7ca5d9" }
+      vertLine: { color: "rgba(63, 176, 255, 0.35)" },
+      horzLine: { color: "rgba(63, 176, 255, 0.35)" }
     }
   });
   series = chart.addCandlestickSeries({
-    upColor: "#11a37f",
-    downColor: "#d1485f",
+    upColor: "#16d1a7",
+    downColor: "#ff6b7a",
     borderVisible: false,
-    wickUpColor: "#11a37f",
-    wickDownColor: "#d1485f"
+    wickUpColor: "#16d1a7",
+    wickDownColor: "#ff6b7a"
   });
   resizeObserver = new ResizeObserver(() => {
-    if (!chart || !chartRoot.value) {
-      return;
+    if (chart && chartRoot.value) {
+      chart.applyOptions({ width: chartRoot.value.clientWidth });
     }
-    chart.applyOptions({ width: chartRoot.value.clientWidth });
   });
   resizeObserver.observe(chartRoot.value);
   chart.applyOptions({ width: chartRoot.value.clientWidth });
@@ -191,15 +217,19 @@ function clearTimers() {
 }
 
 function sendSocketMessage(payload: Record<string, unknown>) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    return;
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(payload));
   }
-  socket.send(JSON.stringify(payload));
 }
 
 function matchesStreamPayload(payload: Record<string, unknown>) {
+  if (String(payload.exchange || "") !== String((props.exchange || "").toLowerCase())) {
+    return false;
+  }
+  if (String(payload.market_type || "spot") !== String(props.marketType || "spot")) {
+    return false;
+  }
   return (
-    String(payload.exchange || "") === String((props.exchange || "").toLowerCase()) &&
     String(payload.symbol || "") === displaySymbol.value &&
     String(payload.interval || "") === selectedInterval.value
   );
@@ -210,26 +240,11 @@ function subscribeCurrentStream() {
     return;
   }
   const next = currentSubscription();
-  if (
-    activeSubscription &&
-    (activeSubscription.exchangeAccountId !== next.exchangeAccountId ||
-      activeSubscription.symbol !== next.symbol ||
-      activeSubscription.interval !== next.interval)
-  ) {
-    sendSocketMessage({
-      action: "unsubscribe_market",
-      exchange_account_id: activeSubscription.exchangeAccountId,
-      symbol: activeSubscription.symbol,
-      interval: activeSubscription.interval
-    });
+  if (activeSubscription) {
+    sendSocketMessage({ action: "unsubscribe_market", ...activeSubscription });
   }
   activeSubscription = next;
-  sendSocketMessage({
-    action: "subscribe_market",
-    exchange_account_id: next.exchangeAccountId,
-    symbol: next.symbol,
-    interval: next.interval
-  });
+  sendSocketMessage({ action: "subscribe_market", ...next });
 }
 
 function closeSocket() {
@@ -239,16 +254,11 @@ function closeSocket() {
   }
   try {
     if (socket.readyState === WebSocket.OPEN && activeSubscription) {
-      sendSocketMessage({
-        action: "unsubscribe_market",
-        exchange_account_id: activeSubscription.exchangeAccountId,
-        symbol: activeSubscription.symbol,
-        interval: activeSubscription.interval
-      });
+      sendSocketMessage({ action: "unsubscribe_market", ...activeSubscription });
     }
     socket.close();
   } catch {
-    // Ignore best-effort unsubscribe path during teardown.
+    // ignore teardown path
   }
   socket = null;
 }
@@ -288,32 +298,21 @@ function handleSocketMessage(rawMessage: string) {
     if (!statusPayload || typeof statusPayload !== "object" || !matchesStreamPayload(statusPayload)) {
       return;
     }
-    const nextState = String(statusPayload.status || "connecting") as
-      | "connecting"
-      | "live"
-      | "reconnecting"
-      | "stale"
-      | "error";
-    connectionState.value = nextState;
-    if (nextState === "error") {
-      errorMessage.value = String(statusPayload.message || "Market stream error.");
-    } else if (nextState === "live") {
-      errorMessage.value = "";
-    }
+    connectionState.value = String(statusPayload.status || "connecting") as typeof connectionState.value;
+    errorMessage.value = connectionState.value === "error"
+      ? String(statusPayload.message || "Market stream error.")
+      : "";
     return;
   }
   if (payload.type !== "market_candle") {
     return;
   }
   const candlePayload = payload.payload;
-  if (!candlePayload || typeof candlePayload !== "object") {
-    return;
-  }
-  if (!matchesStreamPayload(candlePayload)) {
+  if (!candlePayload || typeof candlePayload !== "object" || !matchesStreamPayload(candlePayload) || !series) {
     return;
   }
   const candle = candlePayload.candle;
-  if (!candle || typeof candle !== "object" || !series) {
+  if (!candle || typeof candle !== "object") {
     return;
   }
   series.update({
@@ -337,10 +336,9 @@ function openSocket() {
     subscribeCurrentStream();
     return;
   }
-
   clearTimers();
   connectionState.value = "connecting";
-  socket = new WebSocket(buildEventsWsUrl());
+  socket = new WebSocket(buildWsUrl());
   socket.addEventListener("open", () => {
     connectionState.value = "connecting";
     subscribeCurrentStream();
@@ -367,13 +365,11 @@ function openSocket() {
 
 async function reloadChart() {
   if (!isReady.value) {
-    errorMessage.value = "";
+    errorMessage.value = props.emptyMessage;
     lastPriceLabel.value = "";
     activeSubscription = null;
     connectionState.value = "idle";
-    if (series) {
-      series.setData([]);
-    }
+    series?.setData([]);
     closeSocket();
     return;
   }
@@ -382,12 +378,22 @@ async function reloadChart() {
   errorMessage.value = "";
   loading.value = true;
   try {
-    const response = await getMarketKlines(
-      Number(props.exchangeAccountId),
-      displaySymbol.value,
-      selectedInterval.value,
-      300
-    );
+    const response = isPublic.value
+      ? await getPublicMarketKlines(
+          String(props.exchange || "").toLowerCase(),
+          props.marketType || "spot",
+          displaySymbol.value,
+          selectedInterval.value,
+          300
+        )
+      : await getMarketKlines(
+          Number(props.exchangeAccountId),
+          displaySymbol.value,
+          selectedInterval.value,
+          props.marketType || "spot",
+          300
+        );
+
     series?.setData(response.candles.map((item) => toChartPoint(item)));
     const latest = response.candles[response.candles.length - 1];
     lastPriceLabel.value = latest ? Number(latest.close).toFixed(4) : "";
@@ -401,7 +407,7 @@ async function reloadChart() {
 }
 
 watch(
-  () => [props.exchangeAccountId, props.exchange, props.symbol].join("|"),
+  () => [props.mode, props.exchangeAccountId, props.exchange, props.marketType, props.symbol].join("|"),
   async () => {
     await reloadChart();
   }
@@ -416,26 +422,22 @@ onBeforeUnmount(() => {
   closeSocket();
   resizeObserver?.disconnect();
   resizeObserver = null;
-  if (chart) {
-    chart.remove();
-    chart = null;
-  }
+  chart?.remove();
+  chart = null;
   series = null;
 });
 </script>
 
 <style scoped>
-.chart-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.chart-shell {
+  min-height: 560px;
 }
 
 .chart-toolbar {
   display: flex;
-  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
+  align-items: flex-start;
 }
 
 .chart-toolbar h2 {
@@ -445,46 +447,27 @@ onBeforeUnmount(() => {
 
 .chart-toolbar-actions {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .chart-meta {
+  margin-top: 12px;
   display: flex;
-  flex-wrap: wrap;
   gap: 10px;
+  flex-wrap: wrap;
   color: var(--aq-ink-soft);
-  font-size: 13px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .chart-surface {
-  min-height: 360px;
-  border: 1px solid var(--aq-border);
-  border-radius: 16px;
-  background:
-    linear-gradient(180deg, rgba(247, 251, 255, 0.92) 0%, rgba(255, 255, 255, 1) 100%);
-  overflow: hidden;
+  margin-top: 14px;
+  min-height: 440px;
 }
 
 .chart-root {
-  width: 100%;
-  height: 360px;
-}
-
-.chart-empty {
-  min-height: 360px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  text-align: center;
-  color: var(--aq-ink-soft);
-}
-
-@media (max-width: 760px) {
-  .chart-toolbar {
-    flex-direction: column;
-  }
+  min-height: 440px;
 }
 </style>

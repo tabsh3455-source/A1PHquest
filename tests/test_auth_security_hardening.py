@@ -1,4 +1,4 @@
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 import pyotp
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -20,6 +20,15 @@ def _build_request(ip: str = "127.0.0.1", user_agent: str = "pytest-agent"):
     return SimpleNamespace(headers={"user-agent": user_agent}, client=SimpleNamespace(host=ip))
 
 
+def _login(db: Session, *, username: str, password: str, request=None, otp_code: str | None = None):
+    return auth.login(
+        UserLoginRequest(username=username, password=password, otp_code=otp_code),
+        request or _build_request(),
+        Response(),
+        db,
+    )
+
+
 def test_setup_2fa_rotation_requires_current_code():
     with _build_session() as db:
         secret = pyotp.random_base32()
@@ -36,19 +45,29 @@ def test_setup_2fa_rotation_requires_current_code():
         db.refresh(user)
 
         try:
-            auth.setup_2fa(TOTPSetupRequest(), current_user=user, db=db)
+            auth.setup_2fa(TOTPSetupRequest(), response=Response(), current_user=user, db=db)
             raise AssertionError("Expected HTTPException for missing current_code")
         except HTTPException as exc:
             assert exc.status_code == 400
 
         try:
-            auth.setup_2fa(TOTPSetupRequest(current_code="000000"), current_user=user, db=db)
+            auth.setup_2fa(
+                TOTPSetupRequest(current_code="000000"),
+                response=Response(),
+                current_user=user,
+                db=db,
+            )
             raise AssertionError("Expected HTTPException for invalid current_code")
         except HTTPException as exc:
             assert exc.status_code == 401
 
         valid_code = pyotp.TOTP(secret).now()
-        response = auth.setup_2fa(TOTPSetupRequest(current_code=valid_code), current_user=user, db=db)
+        response = auth.setup_2fa(
+            TOTPSetupRequest(current_code=valid_code),
+            response=Response(),
+            current_user=user,
+            db=db,
+        )
         assert response.otp_secret
         assert response.otpauth_uri.startswith("otpauth://")
 
@@ -77,21 +96,13 @@ def test_login_rate_limit_blocks_repeated_failed_attempts():
         try:
             for _ in range(2):
                 try:
-                    auth.login(
-                        UserLoginRequest(username="limit-user", password="wrong-password"),
-                        _build_request(),
-                        db,
-                    )
+                    _login(db, username="limit-user", password="wrong-password")
                     raise AssertionError("Expected HTTPException for invalid credentials")
                 except HTTPException as exc:
                     assert exc.status_code == 401
 
             try:
-                auth.login(
-                    UserLoginRequest(username="limit-user", password="wrong-password"),
-                    _build_request(),
-                    db,
-                )
+                _login(db, username="limit-user", password="wrong-password")
                 raise AssertionError("Expected HTTPException for login rate limit")
             except HTTPException as exc:
                 assert exc.status_code == 429

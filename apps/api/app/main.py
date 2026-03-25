@@ -6,14 +6,14 @@ from pathlib import Path
 import time
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from .config import get_settings
 from .csrf import CSRFMiddleware
 from .db import SessionLocal, engine
-from .routers import ai, auth, events, exchange_accounts, market, ops, orders, risk, strategies, system_config, ws
+from .routers import ai, auth, events, exchange_accounts, market, ops, orders, public_market, risk, strategies, strategy_templates, system_config, ws
+from .same_host_cors import SameHostCORSMiddleware
 from .services.ai_autopilot import AiAutopilotService
 from .services.market_data import MarketDataService
 from .services.system_config import get_market_data_config_values
@@ -77,13 +77,7 @@ async def app_lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=app_lifespan)
 app.state.ws_manager = WsManager()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_allowed_origin_list(),
-    allow_credentials=settings.cors_allow_credentials,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(SameHostCORSMiddleware)
 app.add_middleware(CSRFMiddleware)
 
 
@@ -173,9 +167,11 @@ app.include_router(ai.router)
 app.include_router(events.router)
 app.include_router(exchange_accounts.router)
 app.include_router(market.router)
+app.include_router(public_market.router)
 app.include_router(ops.router)
 app.include_router(orders.router)
 app.include_router(strategies.router)
+app.include_router(strategy_templates.router)
 app.include_router(system_config.router)
 app.include_router(risk.router)
 app.include_router(ws.router)

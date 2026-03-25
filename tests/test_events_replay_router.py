@@ -11,7 +11,7 @@ from app.ws_manager import WsManager
 
 
 def test_replay_events_returns_user_scoped_history(async_runner):
-    ws_manager = WsManager()
+    ws_manager = WsManager(backend="memory")
     async_runner(ws_manager.push_to_user(101, {"type": "strategy_runtime_update"}))
     async_runner(ws_manager.push_to_user(101, {"type": "trade_filled"}))
     async_runner(ws_manager.push_to_user(102, {"type": "other-user-event"}))
@@ -37,7 +37,7 @@ def test_replay_events_returns_user_scoped_history(async_runner):
 
 
 def test_replay_events_default_window_returns_latest_items(async_runner):
-    ws_manager = WsManager()
+    ws_manager = WsManager(backend="memory")
     for index in range(1, 6):
         async_runner(ws_manager.push_to_user(201, {"type": f"evt-{index}"}))
 

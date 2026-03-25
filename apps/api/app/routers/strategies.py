@@ -5,7 +5,6 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..audit import log_audit_event
@@ -14,15 +13,16 @@ from ..deps import get_current_verified_user, require_step_up_user
 from ..events import build_ws_event
 from ..models import AuditEvent, ExchangeAccount, Strategy, StrategyRuntime, User
 from ..schemas import (
-    DcaStrategyConfig,
-    GenericStrategyConfig,
-    GridStrategyConfig,
-    ParametricStrategyConfig,
     RuntimeConsistencyResponse,
     StrategyCreateRequest,
     StrategyResponse,
     StrategyRuntimeResponse,
     StrategyUpdateRequest,
+)
+from ..services.strategy_templates import (
+    StrategyTemplateSpec,
+    get_strategy_template,
+    validate_strategy_template_config,
 )
 from ..services.strategy_supervisor import (
     RuntimeState,
@@ -47,11 +47,12 @@ def create_strategy(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_verified_user),
 ):
-    config = _validate_strategy_config(payload.strategy_type, payload.config)
+    template, config = _validate_strategy_config(payload.template_key or payload.strategy_type or "", payload.config)
     strategy = Strategy(
         user_id=current_user.id,
         name=payload.name,
-        strategy_type=payload.strategy_type,
+        template_key=template.template_key,
+        strategy_type=template.runtime_strategy_type,
         config_json=json.dumps(config, ensure_ascii=False),
         status="stopped",
     )
@@ -64,7 +65,7 @@ def create_strategy(
         action="strategy_create",
         resource="strategy",
         resource_id=str(strategy.id),
-        details={"strategy_type": strategy.strategy_type},
+        details={"strategy_type": strategy.strategy_type, "template_key": strategy.template_key},
     )
     return _to_strategy_response(strategy)
 
@@ -94,10 +95,12 @@ def update_strategy(
     if strategy.status in {"starting", "running", "stopping"}:
         raise HTTPException(status_code=409, detail="Stop the strategy before editing it")
 
-    config = _validate_strategy_config(payload.strategy_type, payload.config)
+    template, config = _validate_strategy_config(payload.template_key or payload.strategy_type or "", payload.config)
     previous_type = strategy.strategy_type
+    previous_template_key = strategy.template_key
     strategy.name = payload.name
-    strategy.strategy_type = payload.strategy_type
+    strategy.template_key = template.template_key
+    strategy.strategy_type = template.runtime_strategy_type
     strategy.config_json = json.dumps(config, ensure_ascii=False)
     db.add(strategy)
     db.commit()
@@ -111,7 +114,9 @@ def update_strategy(
         resource_id=str(strategy.id),
         details={
             "previous_strategy_type": previous_type,
+            "previous_template_key": previous_template_key,
             "strategy_type": strategy.strategy_type,
+            "template_key": strategy.template_key,
         },
     )
     return _to_strategy_response(strategy)
@@ -162,11 +167,12 @@ async def start_strategy(
         except StrategySupervisorError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    config = _validate_strategy_config(strategy.strategy_type, _safe_load_json(strategy.config_json))
-    if strategy.strategy_type not in {"grid", "dca"}:
+    template = _resolve_strategy_template_for_strategy(strategy)
+    config = _validate_existing_strategy(strategy, template)
+    if not template.live_supported or strategy.strategy_type not in {"grid", "dca"}:
         raise HTTPException(
             status_code=400,
-            detail=f"strategy_type '{strategy.strategy_type}' is not enabled for live runtime yet",
+            detail=f"template '{template.template_key}' is not enabled for live runtime yet",
         )
 
     exchange_account_id = int(config["exchange_account_id"])
@@ -539,20 +545,30 @@ def check_runtime_consistency(
     )
 
 
-def _validate_strategy_config(strategy_type: str, config: dict[str, Any]) -> dict[str, Any]:
+def _validate_strategy_config(template_key: str, config: dict[str, Any]) -> tuple[StrategyTemplateSpec, dict[str, Any]]:
     try:
-        if strategy_type == "grid":
-            return GridStrategyConfig.model_validate(config).model_dump()
-        if strategy_type == "dca":
-            return DcaStrategyConfig.model_validate(config).model_dump()
-        if strategy_type in {"funding_arbitrage", "spot_future_arbitrage"}:
-            return ParametricStrategyConfig.model_validate(config).model_dump()
-        return GenericStrategyConfig.model_validate(config).model_dump()
-    except ValidationError as exc:
+        return validate_strategy_template_config(template_key, config)
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail={"message": "invalid strategy config", "errors": exc.errors()},
+            detail=f"invalid strategy config: {exc}",
         ) from exc
+
+
+def _resolve_strategy_template_for_strategy(strategy: Strategy) -> StrategyTemplateSpec:
+    candidate_key = str(strategy.template_key or "").strip()
+    if not candidate_key or (candidate_key == "custom" and strategy.strategy_type in {"grid", "dca", "funding_arbitrage", "spot_future_arbitrage"}):
+        candidate_key = strategy.strategy_type
+    try:
+        return get_strategy_template(candidate_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _validate_existing_strategy(strategy: Strategy, template: StrategyTemplateSpec) -> dict[str, Any]:
+    config = _safe_load_json(strategy.config_json)
+    _, normalized = _validate_strategy_config(template.template_key, config)
+    return normalized
 
 
 def _safe_load_json(raw: str) -> dict[str, Any]:
@@ -618,9 +634,17 @@ def _to_runtime_response(
 
 
 def _to_strategy_response(strategy: Strategy) -> StrategyResponse:
+    template = _resolve_strategy_template_for_strategy(strategy)
     return StrategyResponse(
         id=strategy.id,
         name=strategy.name,
+        template_key=template.template_key,
+        template_display_name=template.display_name,
+        category=template.category,
+        execution_status=template.execution_status,
+        market_scope=template.market_scope,
+        risk_level=template.risk_level,
+        live_supported=template.live_supported,
         strategy_type=strategy.strategy_type,
         config=_safe_load_json(strategy.config_json),
         status=strategy.status,
