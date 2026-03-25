@@ -148,3 +148,96 @@ def test_user_event_replay_store_migration_skips_existing_tables(monkeypatch):
     revision.upgrade()
     assert created_tables == []
     assert created_indexes == []
+
+
+def test_ai_autopilot_migration_skips_existing_tables_and_indexes(monkeypatch):
+    revision = _load_revision_module(
+        "20260325_0006_ai_autopilot.py",
+        "migration_20260325_0006",
+    )
+    created_tables: list[str] = []
+    created_indexes: list[str] = []
+
+    class _FakeOp:
+        @staticmethod
+        def get_bind():
+            return object()
+
+        @staticmethod
+        def create_table(table_name: str, *args, **kwargs) -> None:
+            created_tables.append(table_name)
+
+        @staticmethod
+        def create_index(index_name: str, table_name: str, columns, unique: bool = False) -> None:
+            created_indexes.append(index_name)
+
+    monkeypatch.setattr(revision, "op", _FakeOp())
+    monkeypatch.setattr(
+        revision.sa,
+        "inspect",
+        lambda _bind: _FakeInspector(
+            tables=[
+                "users",
+                "exchange_accounts",
+                "strategies",
+                "ai_provider_credentials",
+                "ai_autopilot_policies",
+                "ai_autopilot_decision_runs",
+            ],
+            indexes_by_table={
+                "ai_provider_credentials": [
+                    "ix_ai_provider_credentials_id",
+                    "ix_ai_provider_credentials_user_id",
+                ],
+                "ai_autopilot_policies": [
+                    "ix_ai_autopilot_policies_id",
+                    "ix_ai_autopilot_policies_user_id",
+                    "ix_ai_autopilot_policies_provider_id",
+                    "ix_ai_autopilot_policies_exchange_account_id",
+                ],
+                "ai_autopilot_decision_runs": [
+                    "ix_ai_autopilot_decision_runs_id",
+                    "ix_ai_autopilot_decision_runs_user_id",
+                    "ix_ai_autopilot_decision_runs_policy_id",
+                    "ix_ai_autopilot_decision_runs_provider_id",
+                    "ix_ai_autopilot_decision_runs_exchange_account_id",
+                    "ix_ai_autopilot_decision_runs_created_at",
+                ],
+            },
+        ),
+    )
+
+    revision.upgrade()
+    assert created_tables == []
+    assert created_indexes == []
+
+
+def test_ai_policy_allowed_actions_migration_skips_existing_column(monkeypatch):
+    revision = _load_revision_module(
+        "20260325_0007_ai_policy_allowed_actions.py",
+        "migration_20260325_0007",
+    )
+    added_columns: list[str] = []
+
+    class _FakeOp:
+        @staticmethod
+        def get_bind():
+            return object()
+
+        @staticmethod
+        def add_column(table_name: str, column) -> None:
+            assert table_name == "ai_autopilot_policies"
+            added_columns.append(str(column.name))
+
+    monkeypatch.setattr(revision, "op", _FakeOp())
+    monkeypatch.setattr(
+        revision.sa,
+        "inspect",
+        lambda _bind: _FakeInspector(
+            {"ai_autopilot_policies": ["id", "name", "allowed_actions_json"]},
+            tables=["ai_autopilot_policies"],
+        ),
+    )
+
+    revision.upgrade()
+    assert added_columns == []

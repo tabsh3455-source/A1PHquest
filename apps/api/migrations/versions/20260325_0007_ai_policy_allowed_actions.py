@@ -18,6 +18,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if _column_exists("ai_autopilot_policies", "allowed_actions_json"):
+        return
     op.add_column(
         "ai_autopilot_policies",
         sa.Column(
@@ -30,4 +32,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("ai_autopilot_policies", "allowed_actions_json")
+    if _column_exists("ai_autopilot_policies", "allowed_actions_json"):
+        op.drop_column("ai_autopilot_policies", "allowed_actions_json")
+
+
+def _column_exists(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    columns = {column.get("name") for column in inspector.get_columns(table_name)}
+    return column_name in columns
