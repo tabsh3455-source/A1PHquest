@@ -23,9 +23,6 @@ router.beforeEach(async (to) => {
   if (!session) {
     return "/login";
   }
-  if (to.path === "/settings" && session.user.role !== "admin") {
-    return "/dashboard";
-  }
   return true;
 });
 

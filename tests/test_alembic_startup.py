@@ -148,6 +148,5 @@ def test_on_startup_skips_migration_when_disabled(monkeypatch):
 
     monkeypatch.setattr(app_main, "_run_alembic_upgrade", _fail_migration, raising=False)
     monkeypatch.setattr(app_main, "engine", SimpleNamespace(begin=lambda: _FakeBeginCtx()), raising=False)
-    monkeypatch.setattr(app_main, "ensure_bootstrap_admin", lambda: None, raising=False)
 
     app_main.on_startup()

@@ -144,17 +144,22 @@ step_up_rate_limiter = _InMemoryRateLimiter()
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: UserRegisterRequest, db: Session = Depends(get_db)):
+    normalized_username = payload.username.strip()
+    normalized_email = str(payload.email).strip().lower()
+    if len(normalized_username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 non-space characters")
+
     existing = (
         db.query(User)
-        .filter((User.username == payload.username) | (User.email == payload.email))
+        .filter((User.username == normalized_username) | (User.email == normalized_email))
         .first()
     )
     if existing:
         raise HTTPException(status_code=400, detail="Username or email already exists")
 
     user = User(
-        username=payload.username,
-        email=payload.email,
+        username=normalized_username,
+        email=normalized_email,
         password_hash=hash_password(payload.password),
         role="user",
         is_active=True,
@@ -174,10 +179,11 @@ def login(
     db: Session = Depends(get_db),
     response: Response = None,
 ):
+    normalized_username = payload.username.strip()
     client_ip, client_ip_source = _extract_client_ip(request)
     login_limit_key = _build_rate_limit_key(
         scope="login",
-        principal=payload.username.lower().strip(),
+        principal=normalized_username.lower(),
         client_ip=client_ip,
     )
     blocked_seconds = login_rate_limiter.check_blocked(
@@ -190,7 +196,7 @@ def login(
             detail=f"Too many login attempts. Try again in {blocked_seconds} seconds.",
         )
 
-    user = db.query(User).filter(User.username == payload.username, User.is_active.is_(True)).first()
+    user = db.query(User).filter(User.username == normalized_username, User.is_active.is_(True)).first()
     if not user or not verify_password(payload.password, user.password_hash):
         login_rate_limiter.register_failure(
             key=login_limit_key,

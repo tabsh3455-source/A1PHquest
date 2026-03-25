@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..deps import get_current_verified_user, require_admin
+from ..deps import get_current_verified_user
 from ..models import AuditEvent, LighterReconcileRecord, Strategy, StrategyRuntime, User
 from ..schemas import (
     AdminOpsMetricsResponse,
@@ -168,13 +168,14 @@ def get_ops_metrics(
 def get_admin_ops_metrics(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_verified_user),
 ):
     """
-    Cross-tenant operational view for administrators.
+    Cross-tenant operational view for authenticated operators.
 
-    This endpoint intentionally returns aggregated system-level counters only.
-    Raw order/audit payloads remain available through existing tenant-scoped APIs.
+    Admin mode has been removed, so this endpoint intentionally exposes only
+    aggregated system-level counters to any signed-in operator. Raw order and
+    audit payloads remain available through existing tenant-scoped APIs.
     """
     ws_manager: WsManager = request.app.state.ws_manager
     now = datetime.now(timezone.utc).replace(tzinfo=None)

@@ -73,12 +73,6 @@ def get_current_verified_user(
     return authenticate_access_token_user(db=db, token=token, require_verified=True)
 
 
-def require_admin(user: User = Depends(get_current_verified_user)) -> User:
-    if user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
-    return user
-
-
 def require_2fa_user(user: User = Depends(get_current_verified_user)) -> User:
     """
     Enforce that high-risk operations can only be executed by users with 2FA enabled.
@@ -120,12 +114,6 @@ def require_step_up_user(
     if token_purpose != STEP_UP_PURPOSE_HIGH_RISK:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Step-up token purpose mismatch")
     _enforce_token_version(user=user, payload=payload, invalid_status=status.HTTP_403_FORBIDDEN)
-    return user
-
-
-def require_admin_step_up_user(user: User = Depends(require_step_up_user)) -> User:
-    if user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
     return user
 
 

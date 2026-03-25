@@ -49,8 +49,6 @@ The installer will:
 
 - Install Docker Engine and the Docker Compose plugin if they are missing
 - Generate a production `.env` automatically when one does not exist
-- Prompt for bootstrap admin username, email, and password during interactive installs
-- Fall back to auto-generated bootstrap admin credentials for unattended installs
 - Start the core Docker stack (`postgres`, `migrate`, `worker-supervisor`, `api`, `frontend`, `backup`) and verify health checks
 
 By default, frontend and backend stay on separate ports, and `nginx` is not required on the first deployment. The app will come up on:
@@ -58,6 +56,8 @@ By default, frontend and backend stay on separate ports, and `nginx` is not requ
 - Frontend: `http://127.0.0.1:5173/`
 - Backend API: `http://127.0.0.1:8000/`
 - API docs: `http://127.0.0.1:8000/docs`
+
+Open the login page after deployment and use the built-in `Register` flow to create your first user. Account data is stored in PostgreSQL, not in `.env`.
 
 When you are ready to add `nginx` and HTTPS later, rerun:
 
@@ -69,15 +69,6 @@ That second pass will generate a self-signed TLS certificate automatically when 
 
 - Frontend: `https://127.0.0.1/`
 - API docs: `https://127.0.0.1/docs`
-
-For unattended deployments, you can preseed the first admin account yourself:
-
-```bash
-BOOTSTRAP_ADMIN_USERNAME=admin \
-BOOTSTRAP_ADMIN_EMAIL=admin@example.com \
-BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-strong-password' \
-bash install.sh
-```
 
 ## Deploy Directly From GitHub
 

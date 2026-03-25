@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 
-from app.deps import require_2fa_user, require_admin_step_up_user, require_step_up_user
+from app.deps import require_2fa_user, require_step_up_user
 from app.models import User
 from app.security import create_step_up_token
 
@@ -79,21 +79,3 @@ def test_require_step_up_user_blocks_missing_or_mismatched_token():
         raise AssertionError("Expected HTTPException for token purpose mismatch")
     except HTTPException as exc:
         assert exc.status_code == 403
-
-
-def test_require_admin_step_up_user_blocks_non_admin():
-    user = User(
-        id=7,
-        username="non-admin-stepup",
-        email="non-admin-stepup@example.com",
-        password_hash="x",
-        role="user",
-        is_active=True,
-        totp_secret_encrypted="enc-secret",
-    )
-    try:
-        require_admin_step_up_user(user=user)
-        raise AssertionError("Expected HTTPException for non-admin user")
-    except HTTPException as exc:
-        assert exc.status_code == 403
-        assert "Admin role required" in str(exc.detail)

@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from .bootstrap import ensure_bootstrap_admin
 from .config import get_settings
 from .csrf import CSRFMiddleware
 from .db import SessionLocal, engine
@@ -37,7 +36,6 @@ def on_startup() -> None:
                 _run_alembic_upgrade()
             with engine.begin() as conn:
                 conn.execute(text("SELECT 1"))
-            ensure_bootstrap_admin()
             logger.info("Database is ready%s", ", migrations applied" if settings.migrations_run_on_startup else "")
             return
         except Exception as exc:

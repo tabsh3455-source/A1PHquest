@@ -131,6 +131,15 @@ export async function login(username: string, password: string, otpCode?: string
   return applySession(resp.data as AuthSession);
 }
 
+export async function register(username: string, email: string, password: string) {
+  const resp = await http.post("/api/auth/register", {
+    username,
+    email,
+    password
+  });
+  return resp.data as SessionUser;
+}
+
 export async function logout() {
   try {
     await http.post("/api/auth/logout", {});

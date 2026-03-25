@@ -6,7 +6,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.deps import require_admin
+from app.deps import get_current_verified_user
 from app.main import app
 from app.models import AuditEvent, Base, LighterReconcileRecord, Strategy, StrategyRuntime, User
 from app.routers import ops as ops_router
@@ -44,7 +44,7 @@ class _FakeWsManager:
         return self._online_user_count
 
 
-def test_admin_ops_metrics_route_requires_admin_dependency():
+def test_admin_ops_metrics_route_requires_authenticated_dependency():
     route = None
     for candidate in app.routes:
         if isinstance(candidate, APIRoute) and candidate.path == "/api/ops/admin/metrics":
@@ -52,12 +52,12 @@ def test_admin_ops_metrics_route_requires_admin_dependency():
             break
     assert route is not None
     deps = {dependency.call for dependency in route.dependant.dependencies}
-    assert require_admin in deps
+    assert get_current_verified_user in deps
 
 
 def test_admin_ops_metrics_aggregates_cross_user_data():
     with _build_session() as db:
-        admin = _create_user(db, "ops-admin", role="admin")
+        operator = _create_user(db, "ops-operator")
         user_a = _create_user(db, "ops-user-a")
         user_b = _create_user(db, "ops-user-b", active=False)
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -128,7 +128,7 @@ def test_admin_ops_metrics_aggregates_cross_user_data():
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(ws_manager=_FakeWsManager(connection_count=5, online_user_count=3)))
         )
-        response = ops_router.get_admin_ops_metrics(request=request, db=db, current_user=admin)
+        response = ops_router.get_admin_ops_metrics(request=request, db=db, current_user=operator)
 
         assert response.total_users == 3
         assert response.active_users == 2
@@ -155,7 +155,7 @@ def test_admin_ops_metrics_aggregates_cross_user_data():
 
 def test_admin_ops_metrics_error_trend_uses_fixed_time_buckets():
     with _build_session() as db:
-        admin = _create_user(db, "ops-admin-bucket", role="admin")
+        operator = _create_user(db, "ops-operator-bucket")
         user = _create_user(db, "ops-user-bucket")
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         db.add_all(
@@ -183,7 +183,7 @@ def test_admin_ops_metrics_error_trend_uses_fixed_time_buckets():
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(ws_manager=_FakeWsManager(connection_count=0, online_user_count=0)))
         )
-        response = ops_router.get_admin_ops_metrics(request=request, db=db, current_user=admin)
+        response = ops_router.get_admin_ops_metrics(request=request, db=db, current_user=operator)
         assert len(response.error_trend_last_hour) >= 12
         assert len(response.error_trend_last_hour) <= 13
 
@@ -198,7 +198,7 @@ def test_admin_ops_metrics_error_trend_uses_fixed_time_buckets():
 
 def test_admin_ops_metrics_emits_alert_items_when_thresholds_exceeded(monkeypatch):
     with _build_session() as db:
-        admin = _create_user(db, "ops-admin-alert", role="admin")
+        operator = _create_user(db, "ops-operator-alert")
         user = _create_user(db, "ops-user-alert")
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -246,7 +246,7 @@ def test_admin_ops_metrics_emits_alert_items_when_thresholds_exceeded(monkeypatc
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(ws_manager=_FakeWsManager(connection_count=1, online_user_count=1)))
         )
-        response = ops_router.get_admin_ops_metrics(request=request, db=db, current_user=admin)
+        response = ops_router.get_admin_ops_metrics(request=request, db=db, current_user=operator)
         codes = {item.code for item in response.alert_items}
         assert "failed_audit_rate_high" in codes
         assert "runtime_status_drift_detected" in codes

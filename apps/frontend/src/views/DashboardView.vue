@@ -36,7 +36,7 @@
             Let AI evaluate market factors and automatically choose which candidate strategy version should be active.
           </span>
         </button>
-        <button v-if="isAdmin" class="quick-link" type="button" @click="toSettings">
+        <button class="quick-link" type="button" @click="toSettings">
           <span class="quick-link-title">System Settings</span>
           <span class="quick-link-subtitle">
             Tune low-latency market data behavior without editing deployment env files.
@@ -61,7 +61,7 @@
           <span class="aq-kv-label">Ops Center</span>
           <el-button type="primary" plain @click="toOps">Open Metrics</el-button>
         </div>
-        <div v-if="isAdmin" class="aq-kv">
+        <div class="aq-kv">
           <span class="aq-kv-label">Runtime Settings</span>
           <el-button type="primary" plain @click="toSettings">Open Settings</el-button>
         </div>
@@ -71,14 +71,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import { logout as logoutRequest, useSessionState } from "../api";
+import { logout as logoutRequest } from "../api";
 
 const router = useRouter();
-const session = useSessionState();
-const isAdmin = computed(() => session.value?.user.role === "admin");
 
 function toStrategies() {
   router.push("/strategies");

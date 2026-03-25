@@ -18,7 +18,7 @@ def _build_session() -> Session:
     return Session(engine)
 
 
-def _create_user(db: Session, username: str, role: str = "admin") -> User:
+def _create_user(db: Session, username: str, role: str = "user") -> User:
     user = User(
         username=username,
         email=f"{username}@example.com",

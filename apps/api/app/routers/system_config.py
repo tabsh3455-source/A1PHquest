@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..audit import log_audit_event
 from ..db import get_db
-from ..deps import require_admin, require_admin_step_up_user
+from ..deps import get_current_verified_user, require_step_up_user
 from ..models import User
 from ..schemas import MarketDataConfigRequest, MarketDataConfigResponse
 from ..services.market_data import MarketDataService
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/system-config", tags=["system-config"])
 @router.get("/market-data", response_model=MarketDataConfigResponse)
 def get_market_data_config(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_verified_user),
 ):
     del current_user
     return get_market_data_config_response(db)
@@ -32,7 +32,7 @@ async def update_market_data_config(
     payload: MarketDataConfigRequest,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_step_up_user),
+    current_user: User = Depends(require_step_up_user),
 ):
     response = upsert_market_data_config(db, payload=payload, user_id=current_user.id)
     market_data_service: MarketDataService = request.app.state.market_data_service
@@ -52,7 +52,7 @@ async def update_market_data_config(
 async def reset_market_data_config_route(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_step_up_user),
+    current_user: User = Depends(require_step_up_user),
 ):
     response = reset_market_data_config(db)
     market_data_service: MarketDataService = request.app.state.market_data_service

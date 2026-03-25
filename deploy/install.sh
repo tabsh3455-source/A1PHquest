@@ -13,8 +13,6 @@ RESET_STATE="${RESET_STATE:-0}"
 DEPLOY_NGINX="${DEPLOY_NGINX:-0}"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-600}"
 SELF_SIGNED_TLS_DAYS="${SELF_SIGNED_TLS_DAYS:-365}"
-SUMMARY_ADMIN_USERNAME=""
-SUMMARY_ADMIN_PASSWORD_DISPLAY=""
 
 log() {
   printf '[install] %s\n' "$*"
@@ -249,92 +247,11 @@ set_env_value_if_missing() {
   fi
 }
 
-is_interactive_install() {
-  [ -t 0 ] && [ -t 1 ]
-}
-
-default_bootstrap_admin_email() {
-  local username="${1:-admin}"
-  printf '%s@a1phquest.local' "$username"
-}
-
-prompt_with_default() {
-  local prompt="$1"
-  local default_value="$2"
-  local value=""
-
-  read -r -p "$prompt [$default_value]: " value || true
-  printf '%s' "${value:-$default_value}"
-}
-
-prompt_for_password() {
-  local generated_password="$1"
-  local password=""
-  local confirm=""
-
-  while true; do
-    read -r -s -p "Bootstrap admin password (leave blank to auto-generate): " password || true
-    printf '\n'
-    if [ -z "$password" ]; then
-      printf '%s' "$generated_password"
-      return 0
-    fi
-
-    read -r -s -p "Confirm bootstrap admin password: " confirm || true
-    printf '\n'
-    if [ "$password" = "$confirm" ]; then
-      printf '%s' "$password"
-      return 0
-    fi
-
-    log "Passwords did not match. Please try again."
-  done
-}
-
-configure_bootstrap_admin() {
-  local current_username="${1:-}"
-  local current_email="${2:-}"
-  local current_password="${3:-}"
-  local generated_password
-
-  INSTALL_BOOTSTRAP_ADMIN_USERNAME="${current_username:-admin}"
-  INSTALL_BOOTSTRAP_ADMIN_EMAIL="${current_email:-$(default_bootstrap_admin_email "$INSTALL_BOOTSTRAP_ADMIN_USERNAME")}"
-  INSTALL_BOOTSTRAP_ADMIN_PASSWORD="$current_password"
-  SUMMARY_ADMIN_PASSWORD_DISPLAY="<already configured in .env>"
-
-  if [ -n "${BOOTSTRAP_ADMIN_USERNAME:-}" ]; then
-    INSTALL_BOOTSTRAP_ADMIN_USERNAME="$BOOTSTRAP_ADMIN_USERNAME"
-  elif [ -z "$current_username" ] && is_interactive_install; then
-    INSTALL_BOOTSTRAP_ADMIN_USERNAME="$(prompt_with_default "Bootstrap admin username" "$INSTALL_BOOTSTRAP_ADMIN_USERNAME")"
+remove_env_key() {
+  local key="$1"
+  if [ -f "$ENV_FILE" ]; then
+    sed -i "/^${key}=/d" "$ENV_FILE"
   fi
-
-  if [ -n "${BOOTSTRAP_ADMIN_EMAIL:-}" ]; then
-    INSTALL_BOOTSTRAP_ADMIN_EMAIL="$BOOTSTRAP_ADMIN_EMAIL"
-  elif [ -z "$current_email" ] && is_interactive_install; then
-    INSTALL_BOOTSTRAP_ADMIN_EMAIL="$(prompt_with_default "Bootstrap admin email" "$(default_bootstrap_admin_email "$INSTALL_BOOTSTRAP_ADMIN_USERNAME")")"
-  elif [ -z "$current_email" ]; then
-    INSTALL_BOOTSTRAP_ADMIN_EMAIL="$(default_bootstrap_admin_email "$INSTALL_BOOTSTRAP_ADMIN_USERNAME")"
-  fi
-
-  if [ -n "${BOOTSTRAP_ADMIN_PASSWORD:-}" ]; then
-    INSTALL_BOOTSTRAP_ADMIN_PASSWORD="$BOOTSTRAP_ADMIN_PASSWORD"
-    SUMMARY_ADMIN_PASSWORD_DISPLAY="<provided via BOOTSTRAP_ADMIN_PASSWORD>"
-  elif [ -z "$current_password" ]; then
-    generated_password="$(random_alnum 24)"
-    if is_interactive_install; then
-      INSTALL_BOOTSTRAP_ADMIN_PASSWORD="$(prompt_for_password "$generated_password")"
-      if [ "$INSTALL_BOOTSTRAP_ADMIN_PASSWORD" = "$generated_password" ]; then
-        SUMMARY_ADMIN_PASSWORD_DISPLAY="$generated_password"
-      else
-        SUMMARY_ADMIN_PASSWORD_DISPLAY="<provided during install>"
-      fi
-    else
-      INSTALL_BOOTSTRAP_ADMIN_PASSWORD="$generated_password"
-      SUMMARY_ADMIN_PASSWORD_DISPLAY="$generated_password"
-    fi
-  fi
-
-  SUMMARY_ADMIN_USERNAME="$INSTALL_BOOTSTRAP_ADMIN_USERNAME"
 }
 
 generate_env_file() {
@@ -352,7 +269,6 @@ generate_env_file() {
   jwt_secret="$(random_alnum 48)"
   supervisor_token="$(random_alnum 48)"
   aes_master_key="$(random_alnum 32)"
-  configure_bootstrap_admin "" "" ""
 
   set_env_value "ENVIRONMENT" "prod"
   set_env_value "API_HOST" "0.0.0.0"
@@ -363,10 +279,6 @@ generate_env_file() {
   set_env_value "JWT_SECRET" "$jwt_secret"
   set_env_value "SUPERVISOR_SHARED_TOKEN" "$supervisor_token"
   set_env_value "AES_MASTER_KEY" "$aes_master_key"
-  set_env_value "BOOTSTRAP_ADMIN_ENABLED" "1"
-  set_env_value "BOOTSTRAP_ADMIN_USERNAME" "$INSTALL_BOOTSTRAP_ADMIN_USERNAME"
-  set_env_value "BOOTSTRAP_ADMIN_EMAIL" "$INSTALL_BOOTSTRAP_ADMIN_EMAIL"
-  set_env_value "BOOTSTRAP_ADMIN_PASSWORD" "$INSTALL_BOOTSTRAP_ADMIN_PASSWORD"
   set_env_value "AUTH_COOKIE_SECURE" "1"
   set_env_value "TRUST_PROXY_HEADERS" "1"
   set_env_value "CORS_ALLOWED_ORIGINS" "https://localhost,https://127.0.0.1"
@@ -413,20 +325,19 @@ existing_env_requires_regeneration() {
 }
 
 ensure_existing_env_defaults() {
-  set_env_value_if_missing "BOOTSTRAP_ADMIN_ENABLED" "1"
   set_env_value_if_missing "ENVIRONMENT" "prod"
   set_env_value_if_missing "API_HOST" "0.0.0.0"
   set_env_value_if_missing "AUTH_COOKIE_SECURE" "1"
   set_env_value_if_missing "TRUST_PROXY_HEADERS" "1"
   set_env_value_if_missing "A1PHQUEST_HTTP_PORT" "80"
   set_env_value_if_missing "A1PHQUEST_HTTPS_PORT" "443"
+  remove_env_key "BOOTSTRAP_ADMIN_ENABLED"
+  remove_env_key "BOOTSTRAP_ADMIN_USERNAME"
+  remove_env_key "BOOTSTRAP_ADMIN_EMAIL"
+  remove_env_key "BOOTSTRAP_ADMIN_PASSWORD"
 }
 
 ensure_env_file() {
-  local current_username=""
-  local current_email=""
-  local current_password=""
-
   if [ "$FORCE_REGENERATE_ENV" = "1" ] || [ ! -f "$ENV_FILE" ]; then
     log "Generating deployment .env file..."
     generate_env_file
@@ -439,25 +350,7 @@ ensure_env_file() {
       generate_env_file
       return
     fi
-    current_username="$(get_env_value "BOOTSTRAP_ADMIN_USERNAME" || true)"
-    current_email="$(get_env_value "BOOTSTRAP_ADMIN_EMAIL" || true)"
-    current_password="$(get_env_value "BOOTSTRAP_ADMIN_PASSWORD" || true)"
     ensure_existing_env_defaults
-    if ! grep -q '^BOOTSTRAP_ADMIN_USERNAME=' "$ENV_FILE" || ! grep -q '^BOOTSTRAP_ADMIN_EMAIL=' "$ENV_FILE" || ! grep -q '^BOOTSTRAP_ADMIN_PASSWORD=' "$ENV_FILE"; then
-      configure_bootstrap_admin "$current_username" "$current_email" "$current_password"
-    else
-      SUMMARY_ADMIN_USERNAME="${current_username:-admin}"
-      SUMMARY_ADMIN_PASSWORD_DISPLAY="<already configured in .env>"
-    fi
-    if ! grep -q '^BOOTSTRAP_ADMIN_USERNAME=' "$ENV_FILE"; then
-      set_env_value "BOOTSTRAP_ADMIN_USERNAME" "$INSTALL_BOOTSTRAP_ADMIN_USERNAME"
-    fi
-    if ! grep -q '^BOOTSTRAP_ADMIN_EMAIL=' "$ENV_FILE"; then
-      set_env_value "BOOTSTRAP_ADMIN_EMAIL" "$INSTALL_BOOTSTRAP_ADMIN_EMAIL"
-    fi
-    if ! grep -q '^BOOTSTRAP_ADMIN_PASSWORD=' "$ENV_FILE"; then
-      set_env_value "BOOTSTRAP_ADMIN_PASSWORD" "$INSTALL_BOOTSTRAP_ADMIN_PASSWORD"
-    fi
   fi
 }
 
@@ -667,11 +560,11 @@ A1phquest deployment completed.
 - API health: http://127.0.0.1:8000/healthz
 - $extra_note
 - Env file: $ENV_FILE
-- Admin username: ${SUMMARY_ADMIN_USERNAME:-admin}
-- Admin password: ${SUMMARY_ADMIN_PASSWORD_DISPLAY:-<see .env>}
 
 Notes:
 - Frontend and backend stay on separate ports by default.
+- Open the login page and use Register to create your first database-backed user.
+- User credentials are not stored in .env anymore.
 - Nginx/TLS is optional during first bootstrap. When you are ready, rerun:
   DEPLOY_NGINX=1 bash install.sh
 - When DEPLOY_NGINX=1, the installer uses a self-signed TLS certificate by

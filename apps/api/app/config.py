@@ -41,10 +41,6 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = Field(default=False, alias="AUTH_COOKIE_SECURE")
     csrf_cookie_name: str = Field(default="a1phquest_csrf", alias="CSRF_COOKIE_NAME")
     csrf_header_name: str = Field(default="X-CSRF-Token", alias="CSRF_HEADER_NAME")
-    bootstrap_admin_enabled: bool = Field(default=True, alias="BOOTSTRAP_ADMIN_ENABLED")
-    bootstrap_admin_username: str = Field(default="admin", alias="BOOTSTRAP_ADMIN_USERNAME")
-    bootstrap_admin_email: str = Field(default="admin@a1phquest.local", alias="BOOTSTRAP_ADMIN_EMAIL")
-    bootstrap_admin_password: str = Field(default="", alias="BOOTSTRAP_ADMIN_PASSWORD")
 
     kms_mode: str = Field(default="local_aes", alias="KMS_MODE")
     aes_master_key: str = Field(
