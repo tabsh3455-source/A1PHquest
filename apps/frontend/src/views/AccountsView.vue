@@ -1,160 +1,211 @@
 <template>
-  <AppShell>
+  <AppShell
+    title="Account Vault"
+    subtitle="Store exchange credentials behind a short-lived control token, monitor live versus testnet coverage, and keep validation or sync actions inside one secure terminal."
+  >
     <template #toolbar>
-      <el-button @click="toDashboard">Dashboard</el-button>
+      <router-link class="aq-auth-link accounts-toolbar-link" to="/market">Open Market</router-link>
+      <el-button @click="loadAccounts" :loading="loading">Refresh</el-button>
     </template>
 
-    <div class="aq-panel aq-fade-up">
-      <div class="aq-title-row">
+    <el-alert
+      v-if="message"
+      :title="message"
+      :type="messageType"
+      show-icon
+      class="aq-fade-up"
+    />
+
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
         <div>
-          <h2>Exchange Accounts</h2>
-          <p class="aq-subtitle">
-            Store Binance, OKX, and Lighter credentials, then validate and sync them from one place.
+          <h2>Coverage Snapshot</h2>
+          <p class="aq-section-copy">
+            This page is the credential vault for the runtime. Accounts stay encrypted server-side, while validation and sync still require a fresh 2FA control token.
           </p>
         </div>
-        <span class="aq-chip">A1phquest Credentials</span>
+        <span class="aq-chip">{{ stepUpToken ? `Step-up live / ${stepUpExpiresText}` : "Step-up required" }}</span>
       </div>
 
-      <el-alert
-        style="margin-top: 12px"
-        type="info"
-        :closable="false"
-        title="High-risk actions such as create, validate, and sync require a short-lived step-up token."
-      />
+      <div class="aq-summary-strip">
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Saved Accounts</span>
+          <strong class="aq-metric-value">{{ rows.length }}</strong>
+          <span class="aq-metric-copy">Credential entries stored for runtime sync and strategy routing.</span>
+        </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Live Accounts</span>
+          <strong class="aq-metric-value">{{ liveCount }}</strong>
+          <span class="aq-metric-copy">Production venues currently available for strategy startup.</span>
+        </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Testnet Accounts</span>
+          <strong class="aq-metric-value">{{ testnetCount }}</strong>
+          <span class="aq-metric-copy">Sandbox routes you can use before switching a version to live.</span>
+        </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Venues Wired</span>
+          <strong class="aq-metric-value">{{ venueCount }}</strong>
+          <span class="aq-metric-copy">Binance, OKX, and Lighter footprints represented in your vault.</span>
+        </div>
+      </div>
+    </section>
 
-      <div class="aq-grid aq-grid-2" style="margin-top: 14px">
-        <section class="aq-soft-block">
-          <h3 class="section-title">1. Step-up Token</h3>
-          <p class="aq-form-note">
-            Enter your current Google Authenticator code to unlock account management actions.
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
+          <h2>Credential Ledger</h2>
+          <p class="aq-section-copy">
+            Validate keys, sync balances and positions, and keep a readable status trail without leaving the trading workspace.
           </p>
-          <el-row :gutter="10">
-            <el-col :xs="24" :md="11">
-              <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter 6-digit OTP" />
-            </el-col>
-            <el-col :xs="24" :md="13">
-              <el-space wrap>
-                <el-button type="primary" :loading="stepUpLoading" @click="issueStepUpToken">
-                  Issue Token
-                </el-button>
-                <el-tag v-if="stepUpToken" type="success">
-                  Active ({{ stepUpExpiresText }})
-                </el-tag>
-              </el-space>
-            </el-col>
-          </el-row>
-        </section>
-
-        <section class="aq-soft-block">
-          <h3 class="section-title">2. Create Account</h3>
-          <el-form label-position="top">
-            <el-row :gutter="12">
-              <el-col :xs="24" :md="8">
-                <el-form-item label="Exchange">
-                  <el-select v-model="form.exchange" style="width: 100%">
-                    <el-option label="Binance" value="binance" />
-                    <el-option label="OKX" value="okx" />
-                    <el-option label="Lighter" value="lighter" />
-                  </el-select>
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :md="8">
-                <el-form-item label="Alias">
-                  <el-input v-model="form.account_alias" placeholder="main-okx / trader-a" />
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :md="8">
-                <el-form-item label="Testnet">
-                  <el-switch v-model="form.is_testnet" />
-                </el-form-item>
-              </el-col>
-            </el-row>
-
-            <el-row :gutter="12">
-              <el-col :xs="24" :md="12">
-                <el-form-item label="API Key">
-                  <el-input v-model="form.api_key" placeholder="Enter API key" />
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :md="12">
-                <el-form-item label="API Secret">
-                  <el-input
-                    v-model="form.api_secret"
-                    type="password"
-                    show-password
-                    placeholder="Enter API secret"
-                  />
-                </el-form-item>
-              </el-col>
-            </el-row>
-
-            <el-row :gutter="12">
-              <el-col :xs="24" :md="12">
-                <el-form-item label="Passphrase (OKX only)">
-                  <el-input
-                    v-model="form.passphrase"
-                    :disabled="form.exchange !== 'okx'"
-                    placeholder="Required only for OKX"
-                  />
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :md="12" class="action-col">
-                <el-space wrap>
-                  <el-button type="primary" :loading="creating" @click="submitCreate">
-                    Create Account
-                  </el-button>
-                  <el-button :loading="loading" @click="loadAccounts">Refresh</el-button>
-                </el-space>
-              </el-col>
-            </el-row>
-          </el-form>
-        </section>
+        </div>
+        <span class="aq-chip">{{ rows.length ? "Vault active" : "No accounts yet" }}</span>
       </div>
 
-      <el-alert
-        v-if="message"
-        style="margin-top: 12px"
-        :title="message"
-        :type="messageType"
-        show-icon
-      />
+      <div v-if="!rows.length && !loading" class="aq-empty-state">
+        <div>
+          <h3>No exchange accounts saved yet.</h3>
+          <p>Issue a step-up token, add an account in the inspector, then validate it before creating live-ready strategies.</p>
+        </div>
+      </div>
 
-      <el-divider content-position="left">3. Account List</el-divider>
-      <el-table :data="rows" v-loading="loading" style="width: 100%">
-        <el-table-column prop="id" label="ID" width="80" />
+      <el-table v-else :data="rows" v-loading="loading" style="width: 100%">
+        <el-table-column prop="account_alias" label="Alias" min-width="180" />
         <el-table-column prop="exchange" label="Exchange" width="120" />
-        <el-table-column prop="account_alias" label="Alias" min-width="160" />
-        <el-table-column label="Testnet" width="100">
-          <template #default="scope">
-            <el-tag :type="scope.row.is_testnet ? 'warning' : 'success'">
-              {{ scope.row.is_testnet ? "Yes" : "No" }}
+        <el-table-column label="Mode" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.is_testnet ? 'warning' : 'success'">
+              {{ row.is_testnet ? "Testnet" : "Live" }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="Created" min-width="180" />
-        <el-table-column label="Actions" min-width="300">
-          <template #default="scope">
+        <el-table-column label="Status Trail" min-width="280">
+          <template #default="{ row }">
+            <span class="account-status-copy">{{ rowStatus[row.id] || "No validation or sync run yet." }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Actions" min-width="200" fixed="right">
+          <template #default="{ row }">
             <el-space wrap>
-              <el-button size="small" :loading="isBusy(scope.row.id, 'validate')" @click="runValidate(scope.row.id)">
-                Validate
-              </el-button>
-              <el-button size="small" type="primary" :loading="isBusy(scope.row.id, 'sync')" @click="runSync(scope.row.id)">
-                Sync
-              </el-button>
+              <el-button size="small" :loading="isBusy(row.id, 'validate')" @click="runValidate(row.id)">Validate</el-button>
+              <el-button size="small" type="primary" :loading="isBusy(row.id, 'sync')" @click="runSync(row.id)">Sync</el-button>
             </el-space>
-            <div v-if="rowStatus[scope.row.id]" class="row-status">
-              {{ rowStatus[scope.row.id] }}
-            </div>
           </template>
         </el-table-column>
       </el-table>
-    </div>
+    </section>
+
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
+          <h2>Vault Operating Notes</h2>
+          <p class="aq-section-copy">
+            Keep credential hygiene tight so runtime control, AI routing, and strategy startup all stay predictable.
+          </p>
+        </div>
+      </div>
+
+      <div class="aq-note-list">
+        <div class="aq-note-row">
+          <strong>Use alias names as routing labels.</strong>
+          <small>Give each key a desk-style alias so strategies, AI policies, and audits stay readable.</small>
+        </div>
+        <div class="aq-note-row">
+          <strong>Validate before sync.</strong>
+          <small>Run key validation first, then sync balances and positions to confirm permissions and market scope.</small>
+        </div>
+        <div class="aq-note-row">
+          <strong>Keep live and testnet separate.</strong>
+          <small>Use dedicated aliases for paper routes. It keeps template previews and runtime switching less error-prone.</small>
+        </div>
+      </div>
+    </section>
+
+    <template #inspector>
+      <section class="aq-soft-block aq-stack">
+        <div>
+          <h3>Step-up Control</h3>
+          <p class="aq-form-note">Creating, validating, or syncing credentials requires a fresh Google Authenticator code.</p>
+        </div>
+        <el-form label-position="top">
+          <el-form-item label="Current 2FA Code">
+            <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter 6-digit OTP" />
+          </el-form-item>
+          <el-form-item>
+            <el-space wrap>
+              <el-button type="primary" :loading="stepUpLoading" @click="issueStepUpToken">Issue Token</el-button>
+              <el-tag :type="stepUpToken ? 'success' : 'info'">
+                {{ stepUpToken ? `Active / ${stepUpExpiresText}` : "Inactive" }}
+              </el-tag>
+            </el-space>
+          </el-form-item>
+        </el-form>
+      </section>
+
+      <section class="aq-soft-block aq-stack">
+        <div>
+          <h3>New Account</h3>
+          <p class="aq-form-note">Store a new exchange route for strategy execution, balance sync, or autopilot decisions.</p>
+        </div>
+
+        <el-form label-position="top" class="aq-stack">
+          <el-form-item label="Exchange">
+            <el-segmented v-model="form.exchange" :options="exchangeOptions" />
+          </el-form-item>
+          <el-form-item label="Alias">
+            <el-input v-model="form.account_alias" placeholder="main-okx / binance-grid-a" />
+          </el-form-item>
+          <el-form-item label="Testnet Route">
+            <el-switch v-model="form.is_testnet" />
+          </el-form-item>
+          <el-form-item label="API Key">
+            <el-input v-model="form.api_key" placeholder="Enter API key" />
+          </el-form-item>
+          <el-form-item label="API Secret">
+            <el-input
+              v-model="form.api_secret"
+              type="password"
+              show-password
+              placeholder="Enter API secret"
+            />
+          </el-form-item>
+          <el-form-item label="Passphrase">
+            <el-input
+              v-model="form.passphrase"
+              :disabled="form.exchange !== 'okx'"
+              placeholder="Required for OKX only"
+            />
+          </el-form-item>
+          <el-space wrap>
+            <el-button type="primary" :loading="creating" @click="submitCreate">Create Account</el-button>
+            <el-button @click="loadAccounts" :loading="loading">Reload Vault</el-button>
+          </el-space>
+        </el-form>
+      </section>
+
+      <section class="aq-soft-block aq-stack">
+        <div>
+          <h3>Safety Rules</h3>
+          <p class="aq-form-note">The system stores credentials server-side only. Keep live keys restricted to trading and read scopes.</p>
+        </div>
+        <div class="aq-note-list">
+          <div class="aq-note-row">
+            <strong>No withdrawals on bot keys.</strong>
+            <small>Keep exchange API permissions limited to what the runtime actually needs.</small>
+          </div>
+          <div class="aq-note-row">
+            <strong>Pair aliases with environment.</strong>
+            <small>Use suffixes like <code>-test</code> or <code>-live</code> so mistakes stand out before startup.</small>
+          </div>
+        </div>
+      </section>
+    </template>
   </AppShell>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import {
   createExchangeAccount,
@@ -167,7 +218,6 @@ import {
   validateExchangeAccount
 } from "../api";
 
-const router = useRouter();
 const rows = ref<any[]>([]);
 const loading = ref(false);
 const creating = ref(false);
@@ -189,6 +239,16 @@ const form = reactive<ExchangeAccountCreatePayload>({
   is_testnet: false
 });
 
+const exchangeOptions = [
+  { label: "Binance", value: "binance" },
+  { label: "OKX", value: "okx" },
+  { label: "Lighter", value: "lighter" }
+];
+
+const liveCount = computed(() => rows.value.filter((row) => !row.is_testnet).length);
+const testnetCount = computed(() => rows.value.filter((row) => row.is_testnet).length);
+const venueCount = computed(() => new Set(rows.value.map((row) => row.exchange)).size);
+
 const stepUpExpiresText = computed(() => {
   if (!stepUpExpireAt.value) {
     return "0s";
@@ -198,12 +258,7 @@ const stepUpExpiresText = computed(() => {
 });
 
 async function ensureSessionOrRedirect() {
-  try {
-    await ensureSession();
-  } catch {
-    router.push("/login");
-    throw new Error("Login expired. Please sign in again.");
-  }
+  await ensureSession();
 }
 
 function requireStepUpToken() {
@@ -318,28 +373,16 @@ async function runSync(accountId: number) {
   }
 }
 
-function toDashboard() {
-  router.push("/dashboard");
-}
-
 onMounted(loadAccounts);
 </script>
 
 <style scoped>
-.section-title {
-  margin: 0 0 6px;
-  color: var(--aq-ink-strong);
+.accounts-toolbar-link {
+  min-width: 136px;
 }
 
-.action-col {
-  display: flex;
-  align-items: center;
-}
-
-.row-status {
-  margin-top: 6px;
+.account-status-copy {
   color: var(--aq-ink-soft);
-  font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.6;
 }
 </style>

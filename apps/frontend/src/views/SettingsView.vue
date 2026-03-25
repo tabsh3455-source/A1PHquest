@@ -1,125 +1,232 @@
 <template>
-  <AppShell>
+  <AppShell
+    title="Runtime Settings"
+    subtitle="Tune low-latency market data behavior from the terminal itself. Database overrides hot-apply without editing deploy files, while reset returns the stack to its install-time defaults."
+  >
     <template #toolbar>
-      <el-button @click="toDashboard">Dashboard</el-button>
-      <el-button @click="toOps">Ops</el-button>
+      <router-link class="aq-auth-link settings-toolbar-link" to="/ops">Open Ops</router-link>
       <el-button type="primary" @click="reload" :loading="loading">Refresh</el-button>
     </template>
 
-    <div class="aq-panel aq-fade-up">
-      <div class="aq-title-row">
+    <el-alert
+      v-if="feedbackMessage"
+      :title="feedbackMessage"
+      :type="feedbackType"
+      show-icon
+      class="aq-fade-up"
+    />
+
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
         <div>
-          <h1>System Settings</h1>
-          <p class="aq-subtitle">
-            Configure low-latency market data behavior from the web UI. These values are stored in the database and hot-applied without editing `.env`.
+          <h2>Runtime Override State</h2>
+          <p class="aq-section-copy">
+            This control plane only governs market-data runtime behavior. It does not change deployment secrets, exchange credentials, or server bootstrap settings.
           </p>
         </div>
-        <el-tag :type="settings.has_overrides ? 'success' : 'info'">
-          {{ settings.has_overrides ? "Custom overrides active" : "Using deploy defaults" }}
-        </el-tag>
+        <span class="aq-chip">{{ settings.has_overrides ? "Database override active" : "Deploy defaults in use" }}</span>
       </div>
 
-      <el-alert
-        v-if="feedbackMessage"
-        :title="feedbackMessage"
-        :type="feedbackType"
-        show-icon
-        style="margin-top: 14px"
-      />
+      <div class="aq-summary-strip">
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Storage Mode</span>
+          <strong class="aq-metric-value">{{ settings.has_overrides ? "DB" : "ENV" }}</strong>
+          <span class="aq-metric-copy">Overrides live in the database and can be cleared at any time.</span>
+        </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Reconnect Base</span>
+          <strong class="aq-metric-value">{{ form.market_ws_reconnect_base_seconds }}s</strong>
+          <span class="aq-metric-copy">First backoff interval before the streamer retries a broken feed.</span>
+        </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Idle Timeout</span>
+          <strong class="aq-metric-value">{{ form.market_ws_idle_timeout_seconds }}s</strong>
+          <span class="aq-metric-copy">Silence window before a market connection is marked stale.</span>
+        </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Cache / Backfill</span>
+          <strong class="aq-metric-value">{{ form.market_candle_cache_size }} / {{ form.market_rest_backfill_limit }}</strong>
+          <span class="aq-metric-copy">Warm candle window and REST seed depth for cold starts or reconnects.</span>
+        </div>
+      </div>
+    </section>
 
-      <div class="settings-grid">
-        <section class="aq-soft-block">
-          <h2>Access Control</h2>
-          <p class="settings-copy">
-            Saving global runtime settings requires a short-lived 2FA step-up token.
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
+          <h2>Market Data Runtime Profile</h2>
+          <p class="aq-section-copy">
+            Shape reconnect cadence, stale detection, memory depth, and backfill behavior from one operator surface.
           </p>
+        </div>
+      </div>
 
-          <el-form label-width="150px" class="settings-form">
-            <el-form-item label="2FA Code">
-              <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter current 2FA code" />
+      <div class="settings-stage">
+        <section class="aq-soft-block aq-stack">
+          <div>
+            <h3>Connection Recovery</h3>
+            <p class="aq-form-note">Lower values react faster but can reconnect too aggressively on flaky networks.</p>
+          </div>
+          <el-form label-position="top">
+            <el-form-item label="Reconnect Base Seconds">
+              <el-input-number
+                v-model="form.market_ws_reconnect_base_seconds"
+                :min="0.5"
+                :max="30"
+                :step="0.5"
+                :precision="1"
+                style="width: 100%"
+              />
             </el-form-item>
-            <el-form-item>
-              <el-space wrap>
-                <el-button type="primary" :loading="stepUpLoading" @click="issueStepUpToken">
-                  Issue Settings Token
-                </el-button>
-                <el-tag :type="stepUpTokenValid ? 'success' : 'info'">
-                  {{ stepUpTokenValid ? `Token ready (${stepUpRemainingLabel})` : "No active token" }}
-                </el-tag>
-              </el-space>
+            <el-form-item label="Reconnect Max Seconds">
+              <el-input-number
+                v-model="form.market_ws_reconnect_max_seconds"
+                :min="1"
+                :max="120"
+                :step="1"
+                :precision="1"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="Idle Timeout Seconds">
+              <el-input-number
+                v-model="form.market_ws_idle_timeout_seconds"
+                :min="5"
+                :max="120"
+                :step="1"
+                :precision="1"
+                style="width: 100%"
+              />
             </el-form-item>
           </el-form>
         </section>
 
-        <section class="aq-soft-block">
-          <h2>Current State</h2>
-          <p class="settings-copy">
-            Deployment defaults remain available. Use reset to drop database overrides and return to those defaults.
-          </p>
-
-          <el-descriptions :column="1" border size="small" class="settings-descriptions">
-            <el-descriptions-item label="Storage Mode">
-              {{ settings.has_overrides ? "Database override" : "Environment default" }}
-            </el-descriptions-item>
-            <el-descriptions-item label="Last Updated">
-              {{ settings.updated_at || "-" }}
-            </el-descriptions-item>
-            <el-descriptions-item label="Updated By User">
-              {{ settings.updated_by_user_id || "-" }}
-            </el-descriptions-item>
-            <el-descriptions-item label="Deploy Default Snapshot">
-              reconnect={{ settings.default_values.market_ws_reconnect_base_seconds ?? "-" }}s /
-              max={{ settings.default_values.market_ws_reconnect_max_seconds ?? "-" }}s /
-              idle={{ settings.default_values.market_ws_idle_timeout_seconds ?? "-" }}s /
-              cache={{ settings.default_values.market_candle_cache_size ?? "-" }} /
-              backfill={{ settings.default_values.market_rest_backfill_limit ?? "-" }}
-            </el-descriptions-item>
-          </el-descriptions>
+        <section class="aq-soft-block aq-stack">
+          <div>
+            <h3>Candle Memory</h3>
+            <p class="aq-form-note">Increase depth if you want longer warm history, but keep backfill lower than total cache.</p>
+          </div>
+          <el-form label-position="top">
+            <el-form-item label="Candle Cache Size">
+              <el-input-number
+                v-model="form.market_candle_cache_size"
+                :min="100"
+                :max="5000"
+                :step="50"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="REST Backfill Limit">
+              <el-input-number
+                v-model="form.market_rest_backfill_limit"
+                :min="10"
+                :max="2000"
+                :step="10"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </el-form>
         </section>
       </div>
+    </section>
 
-      <el-divider />
-
-      <div class="aq-title-row">
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
         <div>
-          <h2>Market Data Runtime</h2>
-          <p class="aq-subtitle">
-            Tune reconnect behavior, idle detection, candle cache depth, and REST cold-start backfill.
+          <h2>Deploy Snapshot</h2>
+          <p class="aq-section-copy">
+            These are the install-time defaults the stack will fall back to when you clear database overrides.
           </p>
         </div>
       </div>
 
-      <el-form label-width="210px" class="settings-form">
-        <el-form-item label="Reconnect Base Seconds">
-          <el-input-number v-model="form.market_ws_reconnect_base_seconds" :min="0.5" :max="30" :step="0.5" :precision="1" />
-        </el-form-item>
-        <el-form-item label="Reconnect Max Seconds">
-          <el-input-number v-model="form.market_ws_reconnect_max_seconds" :min="1" :max="120" :step="1" :precision="1" />
-        </el-form-item>
-        <el-form-item label="Idle Timeout Seconds">
-          <el-input-number v-model="form.market_ws_idle_timeout_seconds" :min="5" :max="120" :step="1" :precision="1" />
-        </el-form-item>
-        <el-form-item label="Candle Cache Size">
-          <el-input-number v-model="form.market_candle_cache_size" :min="100" :max="5000" :step="50" />
-        </el-form-item>
-        <el-form-item label="REST Backfill Limit">
-          <el-input-number v-model="form.market_rest_backfill_limit" :min="10" :max="2000" :step="10" />
-        </el-form-item>
-        <el-form-item>
-          <el-space wrap>
-            <el-button type="primary" :loading="saveLoading" @click="saveSettings">Save Settings</el-button>
-            <el-button :loading="resetLoading" @click="resetToDefaults">Reset To Defaults</el-button>
-            <el-button @click="restoreFromServer">Discard Local Changes</el-button>
-          </el-space>
-        </el-form-item>
-      </el-form>
-    </div>
+      <div class="aq-note-list">
+        <div class="aq-note-row">
+          <strong>Reconnect base / max</strong>
+          <small>
+            {{ settings.default_values.market_ws_reconnect_base_seconds ?? "-" }}s /
+            {{ settings.default_values.market_ws_reconnect_max_seconds ?? "-" }}s
+          </small>
+        </div>
+        <div class="aq-note-row">
+          <strong>Idle timeout</strong>
+          <small>{{ settings.default_values.market_ws_idle_timeout_seconds ?? "-" }}s before the feed is marked stale.</small>
+        </div>
+        <div class="aq-note-row">
+          <strong>Cache and cold backfill</strong>
+          <small>
+            cache={{ settings.default_values.market_candle_cache_size ?? "-" }},
+            backfill={{ settings.default_values.market_rest_backfill_limit ?? "-" }}
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <template #inspector>
+      <section class="aq-soft-block aq-stack">
+        <div>
+          <h3>Access Control</h3>
+          <p class="aq-form-note">Saving or resetting runtime overrides requires a fresh 2FA step-up token.</p>
+        </div>
+        <el-form label-position="top">
+          <el-form-item label="Current 2FA Code">
+            <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter current 2FA code" />
+          </el-form-item>
+          <el-form-item>
+            <el-space wrap>
+              <el-button type="primary" :loading="stepUpLoading" @click="issueStepUpToken">Issue Settings Token</el-button>
+              <el-tag :type="stepUpTokenValid ? 'success' : 'info'">
+                {{ stepUpTokenValid ? `Ready / ${stepUpRemainingLabel}` : "No active token" }}
+              </el-tag>
+            </el-space>
+          </el-form-item>
+        </el-form>
+      </section>
+
+      <section class="aq-soft-block aq-stack">
+        <div>
+          <h3>Quick Actions</h3>
+          <p class="aq-form-note">Persist current values, discard local edits, or roll back to deploy defaults.</p>
+        </div>
+        <el-space wrap>
+          <el-button type="primary" :loading="saveLoading" @click="saveSettings">Save Settings</el-button>
+          <el-button :loading="resetLoading" @click="resetToDefaults">Reset To Defaults</el-button>
+          <el-button @click="restoreFromServer">Discard Local Edits</el-button>
+        </el-space>
+        <div class="aq-note-list">
+          <div class="aq-note-row">
+            <strong>Last updated</strong>
+            <small>{{ settings.updated_at || "No override has been saved yet." }}</small>
+          </div>
+          <div class="aq-note-row">
+            <strong>Updated by user</strong>
+            <small>{{ settings.updated_by_user_id || "-" }}</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="aq-soft-block aq-stack">
+        <div>
+          <h3>Guardrails</h3>
+          <p class="aq-form-note">The form validates basic bounds before the server accepts a change.</p>
+        </div>
+        <div class="aq-note-list">
+          <div class="aq-note-row">
+            <strong>Reconnect max must stay above reconnect base.</strong>
+            <small>This keeps exponential backoff from collapsing into an invalid schedule.</small>
+          </div>
+          <div class="aq-note-row">
+            <strong>Backfill cannot exceed cache.</strong>
+            <small>Cold starts must fit inside the warm memory window reserved for each market feed.</small>
+          </div>
+        </div>
+      </section>
+    </template>
   </AppShell>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import {
   ensureSession,
@@ -135,7 +242,6 @@ type EditableMarketDataSettings = Omit<
   "has_overrides" | "updated_at" | "updated_by_user_id" | "default_values"
 >;
 
-const router = useRouter();
 const loading = ref(false);
 const saveLoading = ref(false);
 const resetLoading = ref(false);
@@ -173,12 +279,7 @@ const stepUpRemainingLabel = computed(() => {
 });
 
 async function ensureSessionOrRedirect() {
-  try {
-    await ensureSession();
-  } catch {
-    router.push("/login");
-    throw new Error("Login expired. Please sign in again.");
-  }
+  await ensureSession();
 }
 
 function ensureStepUpToken() {
@@ -289,38 +390,19 @@ async function resetToDefaults() {
   }
 }
 
-function toDashboard() {
-  router.push("/dashboard");
-}
-
-function toOps() {
-  router.push("/ops");
-}
-
 onMounted(async () => {
   await reload();
 });
 </script>
 
 <style scoped>
-.settings-grid {
-  margin-top: 16px;
+.settings-toolbar-link {
+  min-width: 120px;
+}
+
+.settings-stage {
   display: grid;
   gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-}
-
-.settings-copy {
-  margin: 8px 0 0;
-  color: var(--aq-ink-soft);
-  line-height: 1.6;
-}
-
-.settings-form {
-  margin-top: 14px;
-}
-
-.settings-descriptions {
-  margin-top: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 </style>

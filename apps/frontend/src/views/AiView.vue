@@ -1,324 +1,361 @@
 <template>
-  <AppShell>
+  <AppShell
+    title="AI Autopilot"
+    subtitle="Run model-backed regime decisions on top of the live market engine. Providers stay isolated, policies stay explicit, and every decision leaves an audit trail before execution touches runtime control."
+  >
     <template #toolbar>
-      <el-button @click="toDashboard">Dashboard</el-button>
-      <el-button @click="toStrategies">Strategies</el-button>
+      <router-link class="aq-auth-link ai-toolbar-link" to="/strategies">Open Strategies</router-link>
       <el-button type="primary" :loading="loading" @click="reloadAll">Refresh</el-button>
     </template>
 
-    <div class="aq-panel aq-fade-up">
-      <div class="aq-title-row">
+    <el-alert
+      v-if="feedbackMessage"
+      :title="feedbackMessage"
+      :type="feedbackType"
+      show-icon
+      class="aq-fade-up"
+    />
+
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
         <div>
-          <h1>AI Autopilot</h1>
-          <p class="aq-subtitle">
-            Let AI evaluate real-time market factors, switch between your approved strategies, and generate tuned new versions when conditions shift.
+          <h2>Autopilot Deck</h2>
+          <p class="aq-section-copy">
+            Providers feed models, policies define scope and allowed actions, and recent decisions show exactly what the AI tried to do with live market context.
           </p>
         </div>
-        <el-tag :type="policies.some((item) => item.status === 'enabled') ? 'success' : 'info'">
-          {{ policies.some((item) => item.status === "enabled") ? "Autopilot active" : "Autopilot idle" }}
-        </el-tag>
+        <span class="aq-chip">{{ enabledPolicyCount ? "Autopilot armed" : "Autopilot idle" }}</span>
       </div>
 
-      <el-alert
-        v-if="feedbackMessage"
-        :title="feedbackMessage"
-        :type="feedbackType"
-        show-icon
-        style="margin-top: 14px"
-      />
-
-      <div class="ai-grid">
-        <section class="aq-soft-block">
-          <h2>Access Control</h2>
-          <p class="settings-copy">
-            Saving AI providers, changing autopilot policies, or executing a manual run requires a fresh 2FA step-up token.
-          </p>
-          <el-form label-width="130px" class="settings-form">
-            <el-form-item label="2FA Code">
-              <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter current 2FA code" />
-            </el-form-item>
-            <el-form-item>
-              <el-space wrap>
-                <el-button type="primary" :loading="stepUpLoading" @click="issueStepUpToken">Issue AI Token</el-button>
-                <el-tag :type="stepUpTokenValid ? 'success' : 'info'">
-                  {{ stepUpTokenValid ? `Token ready (${stepUpRemainingLabel})` : "No active token" }}
-                </el-tag>
-              </el-space>
-            </el-form-item>
-          </el-form>
-        </section>
-
-        <section class="aq-soft-block">
-          <h2>Current State</h2>
-          <p class="settings-copy">
-            AI can choose among the candidate grid and DCA strategies you allow, or clone one into a new tuned version. Exchange execution still goes through the existing risk and runtime path.
-          </p>
-          <el-descriptions :column="1" border size="small" class="settings-descriptions">
-            <el-descriptions-item label="Providers">{{ providers.length }}</el-descriptions-item>
-            <el-descriptions-item label="Policies">{{ policies.length }}</el-descriptions-item>
-            <el-descriptions-item label="Enabled Policies">
-              {{ policies.filter((item) => item.status === "enabled").length }}
-            </el-descriptions-item>
-            <el-descriptions-item label="Recent Decisions">{{ decisions.length }}</el-descriptions-item>
-          </el-descriptions>
-        </section>
-      </div>
-
-      <el-divider />
-
-      <div class="ai-grid">
-        <section class="aq-soft-block">
-          <div class="section-row">
-            <div>
-              <h2>AI Provider</h2>
-              <p class="settings-copy">Store the endpoint and model that will receive market-factor snapshots.</p>
-            </div>
-            <el-button @click="resetProviderForm">New Provider</el-button>
-          </div>
-
-          <el-form label-width="120px" class="settings-form">
-            <el-form-item label="Name">
-              <el-input v-model="providerForm.name" placeholder="Primary OpenAI-compatible endpoint" />
-            </el-form-item>
-            <el-form-item label="Base URL">
-              <el-input v-model="providerForm.base_url" placeholder="https://api.openai.com/v1" />
-            </el-form-item>
-            <el-form-item label="Model">
-              <el-input v-model="providerForm.model_name" placeholder="gpt-4.1-mini" />
-            </el-form-item>
-            <el-form-item :label="providerForm.id ? 'API Key (optional)' : 'API Key'">
-              <el-input
-                v-model="providerForm.api_key"
-                show-password
-                type="password"
-                placeholder="sk-..."
-              />
-            </el-form-item>
-            <el-form-item label="Enabled">
-              <el-switch v-model="providerForm.is_active" />
-            </el-form-item>
-            <el-form-item>
-              <el-space wrap>
-                <el-button type="primary" :loading="providerSaving" @click="saveProvider">
-                  {{ providerForm.id ? "Update Provider" : "Create Provider" }}
-                </el-button>
-                <el-button @click="resetProviderForm">Reset</el-button>
-              </el-space>
-            </el-form-item>
-          </el-form>
-
-          <el-table :data="providers" style="width: 100%" size="small">
-            <el-table-column prop="name" label="Name" min-width="140" />
-            <el-table-column prop="model_name" label="Model" min-width="120" />
-            <el-table-column prop="base_url" label="Endpoint" min-width="200" />
-            <el-table-column label="State" width="100">
-              <template #default="{ row }">
-                <el-tag :type="row.is_active ? 'success' : 'info'">
-                  {{ row.is_active ? "Active" : "Disabled" }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Actions" width="100">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="editProvider(row)">Edit</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </section>
-
-        <section class="aq-soft-block">
-          <div class="section-row">
-            <div>
-              <h2>Autopilot Policy</h2>
-              <p class="settings-copy">Bind an account and symbol, then let AI decide which candidate strategy version should be active or whether it should generate a tuned copy.</p>
-            </div>
-            <el-button @click="resetPolicyForm">New Policy</el-button>
-          </div>
-
-          <el-form label-width="160px" class="settings-form">
-            <el-form-item label="Name">
-              <el-input v-model="policyForm.name" placeholder="BTC regime switcher" />
-            </el-form-item>
-            <el-form-item label="Provider">
-              <el-select v-model="policyForm.provider_id" placeholder="Select AI provider" style="width: 100%">
-                <el-option v-for="item in providers" :key="item.id" :label="`${item.name} · ${item.model_name}`" :value="item.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="Exchange Account">
-              <el-select v-model="policyForm.exchange_account_id" placeholder="Select exchange account" style="width: 100%">
-                <el-option
-                  v-for="item in exchangeAccounts"
-                  :key="item.id"
-                  :label="`${item.account_alias} · ${item.exchange}${item.is_testnet ? ' (testnet)' : ''}`"
-                  :value="item.id"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="Symbol">
-              <el-input v-model="policyForm.symbol" placeholder="BTCUSDT / BTC-USDT" />
-            </el-form-item>
-            <el-form-item label="Interval">
-              <el-segmented v-model="policyForm.interval" :options="intervalOptions" />
-            </el-form-item>
-            <el-form-item label="Candidate Strategies">
-              <el-select v-model="policyForm.strategy_ids" multiple collapse-tags collapse-tags-tooltip placeholder="Choose grid or DCA versions" style="width: 100%">
-                <el-option
-                  v-for="item in editableStrategies"
-                  :key="item.id"
-                  :label="`${item.name} · ${item.strategy_type} · ${item.status}`"
-                  :value="item.id"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="Allowed AI Actions">
-              <el-checkbox-group v-model="policyForm.allowed_actions">
-                <el-checkbox label="activate_strategy">Switch to a candidate strategy</el-checkbox>
-                <el-checkbox label="stop_strategy">Stop a running candidate</el-checkbox>
-                <el-checkbox label="create_strategy_version">Generate and use a tuned new version</el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-            <el-form-item label="Execution Mode">
-              <el-radio-group v-model="policyForm.execution_mode">
-                <el-radio-button label="dry_run">Dry Run</el-radio-button>
-                <el-radio-button label="auto">Auto</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="Policy Status">
-              <el-radio-group v-model="policyForm.status">
-                <el-radio-button label="disabled">Disabled</el-radio-button>
-                <el-radio-button label="enabled">Enabled</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="Decision Interval (s)">
-              <el-input-number v-model="policyForm.decision_interval_seconds" :min="30" :max="3600" :step="30" />
-            </el-form-item>
-            <el-form-item label="Minimum Confidence">
-              <el-slider v-model="policyForm.minimum_confidence" :min="0" :max="1" :step="0.05" show-input />
-            </el-form-item>
-            <el-form-item label="Max Actions / Hour">
-              <el-input-number v-model="policyForm.max_actions_per_hour" :min="1" :max="120" />
-            </el-form-item>
-            <el-form-item label="Custom Prompt">
-              <el-input
-                v-model="policyForm.custom_prompt"
-                type="textarea"
-                :rows="5"
-                placeholder="Optional extra policy instructions for the model"
-              />
-            </el-form-item>
-            <el-form-item>
-              <el-space wrap>
-                <el-button type="primary" :loading="policySaving" @click="savePolicy">
-                  {{ policyForm.id ? "Update Policy" : "Create Policy" }}
-                </el-button>
-                <el-button @click="resetPolicyForm">Reset</el-button>
-              </el-space>
-            </el-form-item>
-          </el-form>
-        </section>
-      </div>
-
-      <el-divider />
-
-      <section class="aq-soft-block">
-        <div class="section-row">
-          <div>
-            <h2>Policies</h2>
-            <p class="settings-copy">Run a dry evaluation, enable automation, or inspect the latest AI decision trail.</p>
-          </div>
+      <div class="aq-summary-strip">
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Providers</span>
+          <strong class="aq-metric-value">{{ providers.length }}</strong>
+          <span class="aq-metric-copy">Model endpoints available to receive factor snapshots.</span>
         </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Enabled Policies</span>
+          <strong class="aq-metric-value">{{ enabledPolicyCount }}</strong>
+          <span class="aq-metric-copy">Policies currently allowed to run on their own scheduler.</span>
+        </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Auto Execution</span>
+          <strong class="aq-metric-value">{{ autoPolicyCount }}</strong>
+          <span class="aq-metric-copy">Policies allowed to take real runtime action instead of dry-running.</span>
+        </div>
+        <div class="aq-metric-tile">
+          <span class="aq-metric-kicker">Recent Decisions</span>
+          <strong class="aq-metric-value">{{ decisions.length }}</strong>
+          <span class="aq-metric-copy">Latest runs with factor snapshot, rationale, and execution result.</span>
+        </div>
+      </div>
+    </section>
 
-        <el-table :data="policies" style="width: 100%">
-          <el-table-column prop="name" label="Policy" min-width="180" />
-          <el-table-column label="Scope" min-width="220">
-            <template #default="{ row }">
-              {{ row.symbol }} · {{ row.interval }} · acct {{ row.exchange_account_id }}
-            </template>
-          </el-table-column>
-          <el-table-column label="Mode" width="110">
-            <template #default="{ row }">
-              <el-tag :type="row.execution_mode === 'auto' ? 'warning' : 'info'">
-                {{ row.execution_mode }}
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
+          <h2>Provider Registry</h2>
+          <p class="aq-section-copy">
+            Keep provider inventory visible so you can switch models without losing policy history or runtime context.
+          </p>
+        </div>
+      </div>
+
+      <div v-if="!providers.length && !loading" class="aq-empty-state">
+        <div>
+          <h3>No AI providers saved yet.</h3>
+          <p>Create a provider in the inspector, then attach policies to symbols and approved strategy versions.</p>
+        </div>
+      </div>
+
+      <el-table v-else :data="providers" style="width: 100%" size="small">
+        <el-table-column prop="name" label="Provider" min-width="170" />
+        <el-table-column prop="model_name" label="Model" min-width="140" />
+        <el-table-column prop="base_url" label="Endpoint" min-width="220" />
+        <el-table-column label="State" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.is_active ? 'success' : 'info'">
+              {{ row.is_active ? "Active" : "Disabled" }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Actions" width="90">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="editProvider(row)">Edit</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </section>
+
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
+          <h2>Policy Matrix</h2>
+          <p class="aq-section-copy">
+            Policies bind a provider to an exchange account, symbol, interval, and a shortlist of candidate strategies or AI-generated variants.
+          </p>
+        </div>
+      </div>
+
+      <div v-if="!policies.length && !loading" class="aq-empty-state">
+        <div>
+          <h3>No autopilot policies configured yet.</h3>
+          <p>After you save a provider and at least one grid or DCA strategy, create a policy to run dry-run evaluations or full automatic switching.</p>
+        </div>
+      </div>
+
+      <el-table v-else :data="policies" style="width: 100%">
+        <el-table-column prop="name" label="Policy" min-width="190" />
+        <el-table-column label="Scope" min-width="220">
+          <template #default="{ row }">
+            {{ row.symbol }} / {{ row.interval }} / acct {{ row.exchange_account_id }}
+          </template>
+        </el-table-column>
+        <el-table-column label="Mode" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.execution_mode === 'auto' ? 'warning' : 'info'">
+              {{ row.execution_mode === "auto" ? "Auto" : "Dry Run" }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Status" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'enabled' ? 'success' : 'info'">
+              {{ row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Allowed Actions" min-width="210">
+          <template #default="{ row }">
+            <span class="policy-actions-copy">{{ formatAllowedActions(row.allowed_actions) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Last Run" min-width="160">
+          <template #default="{ row }">{{ row.last_run_at || "-" }}</template>
+        </el-table-column>
+        <el-table-column label="Actions" min-width="290" fixed="right">
+          <template #default="{ row }">
+            <el-space wrap>
+              <el-button link type="primary" @click="editPolicy(row)">Edit</el-button>
+              <el-button link @click="runPolicy(row, true)">Dry Run</el-button>
+              <el-button v-if="row.execution_mode === 'auto'" link type="warning" @click="runPolicy(row, false)">
+                Execute Now
+              </el-button>
+              <el-button
+                v-if="row.status === 'enabled'"
+                link
+                type="danger"
+                :loading="policyActionId === row.id && policyActionKind === 'disable'"
+                @click="disablePolicy(row)"
+              >
+                Disable
+              </el-button>
+              <el-button
+                v-else
+                link
+                type="success"
+                :loading="policyActionId === row.id && policyActionKind === 'enable'"
+                @click="enablePolicy(row)"
+              >
+                Enable
+              </el-button>
+            </el-space>
+          </template>
+        </el-table-column>
+      </el-table>
+    </section>
+
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
+          <h2>Decision Trail</h2>
+          <p class="aq-section-copy">
+            Every run records the rationale and action outcome so you can compare dry-run reasoning against real runtime changes.
+          </p>
+        </div>
+      </div>
+
+      <el-table :data="decisions" style="width: 100%">
+        <el-table-column prop="created_at" label="Time" min-width="170" />
+        <el-table-column prop="policy_id" label="Policy" width="80" />
+        <el-table-column prop="status" label="Status" width="110" />
+        <el-table-column prop="action" label="Action" width="160" />
+        <el-table-column label="Target" width="120">
+          <template #default="{ row }">{{ row.target_strategy_id || "-" }}</template>
+        </el-table-column>
+        <el-table-column label="Confidence" width="110">
+          <template #default="{ row }">{{ Number(row.confidence || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column label="Summary" min-width="300">
+          <template #default="{ row }">{{ formatDecisionSummary(row) }}</template>
+        </el-table-column>
+      </el-table>
+    </section>
+
+    <template #inspector>
+      <section class="aq-soft-block aq-stack">
+        <div>
+          <h3>Control Token</h3>
+          <p class="aq-form-note">Provider edits, policy edits, and manual AI runs all require a fresh 2FA step-up token.</p>
+        </div>
+        <el-form label-position="top">
+          <el-form-item label="Current 2FA Code">
+            <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter current 2FA code" />
+          </el-form-item>
+          <el-form-item>
+            <el-space wrap>
+              <el-button type="primary" :loading="stepUpLoading" @click="issueStepUpToken">Issue AI Token</el-button>
+              <el-tag :type="stepUpTokenValid ? 'success' : 'info'">
+                {{ stepUpTokenValid ? `Ready / ${stepUpRemainingLabel}` : "No active token" }}
               </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="Status" width="110">
-            <template #default="{ row }">
-              <el-tag :type="row.status === 'enabled' ? 'success' : 'info'">
-                {{ row.status }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="Last Run" min-width="160">
-            <template #default="{ row }">
-              {{ row.last_run_at || "-" }}
-            </template>
-          </el-table-column>
-          <el-table-column label="Actions" min-width="260">
-            <template #default="{ row }">
-              <el-space wrap>
-                <el-button link type="primary" @click="editPolicy(row)">Edit</el-button>
-                <el-button link @click="runPolicy(row, true)">Dry Run</el-button>
-                <el-button v-if="row.execution_mode === 'auto'" link type="warning" @click="runPolicy(row, false)">
-                  Execute Now
-                </el-button>
-                <el-button
-                  v-if="row.status === 'enabled'"
-                  link
-                  type="danger"
-                  :loading="policyActionId === row.id && policyActionKind === 'disable'"
-                  @click="disablePolicy(row)"
-                >
-                  Disable
-                </el-button>
-                <el-button
-                  v-else
-                  link
-                  type="success"
-                  :loading="policyActionId === row.id && policyActionKind === 'enable'"
-                  @click="enablePolicy(row)"
-                >
-                  Enable
-                </el-button>
-              </el-space>
-            </template>
-          </el-table-column>
-        </el-table>
+            </el-space>
+          </el-form-item>
+        </el-form>
       </section>
 
-      <el-divider />
-
-      <section class="aq-soft-block">
-        <div class="section-row">
+      <section class="aq-soft-block aq-stack">
+        <div class="aq-title-row">
           <div>
-            <h2>Recent Decisions</h2>
-            <p class="settings-copy">Every run stores the factor snapshot, AI output, and execution result for review.</p>
+            <h3>Provider Editor</h3>
+            <p class="aq-form-note">Save the OpenAI-compatible endpoint that will receive factor snapshots and return structured actions.</p>
           </div>
+          <el-tag :type="providerForm.id ? 'warning' : 'success'">
+            {{ providerForm.id ? `Editing #${providerForm.id}` : "New provider" }}
+          </el-tag>
+        </div>
+        <el-form label-position="top" class="aq-stack">
+          <el-form-item label="Name">
+            <el-input v-model="providerForm.name" placeholder="Primary OpenAI-compatible endpoint" />
+          </el-form-item>
+          <el-form-item label="Base URL">
+            <el-input v-model="providerForm.base_url" placeholder="https://api.openai.com/v1" />
+          </el-form-item>
+          <el-form-item label="Model">
+            <el-input v-model="providerForm.model_name" placeholder="gpt-4.1-mini" />
+          </el-form-item>
+          <el-form-item :label="providerForm.id ? 'API Key (optional)' : 'API Key'">
+            <el-input
+              v-model="providerForm.api_key"
+              show-password
+              type="password"
+              placeholder="sk-..."
+            />
+          </el-form-item>
+          <el-form-item label="Enabled">
+            <el-switch v-model="providerForm.is_active" />
+          </el-form-item>
+          <el-space wrap>
+            <el-button type="primary" :loading="providerSaving" @click="saveProvider">
+              {{ providerForm.id ? "Update Provider" : "Create Provider" }}
+            </el-button>
+            <el-button @click="resetProviderForm">Reset</el-button>
+          </el-space>
+        </el-form>
+      </section>
+
+      <section class="aq-soft-block aq-stack">
+        <div class="aq-title-row">
+          <div>
+            <h3>Policy Editor</h3>
+            <p class="aq-form-note">Bind account, symbol, interval, and candidate strategy versions into one AI control surface.</p>
+          </div>
+          <el-tag :type="policyForm.id ? 'warning' : 'success'">
+            {{ policyForm.id ? `Editing #${policyForm.id}` : "New policy" }}
+          </el-tag>
         </div>
 
-        <el-table :data="decisions" style="width: 100%">
-          <el-table-column prop="created_at" label="Time" min-width="160" />
-          <el-table-column prop="policy_id" label="Policy" width="80" />
-          <el-table-column prop="status" label="Status" width="110" />
-          <el-table-column prop="action" label="Action" width="130" />
-          <el-table-column label="Target" width="100">
-            <template #default="{ row }">
-              {{ row.target_strategy_id || "-" }}
-            </template>
-          </el-table-column>
-          <el-table-column label="Confidence" width="110">
-            <template #default="{ row }">
-              {{ Number(row.confidence || 0).toFixed(2) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="Rationale" min-width="260">
-            <template #default="{ row }">
-              {{ formatDecisionSummary(row) }}
-            </template>
-          </el-table-column>
-        </el-table>
+        <el-form label-position="top" class="aq-stack">
+          <el-form-item label="Name">
+            <el-input v-model="policyForm.name" placeholder="BTC regime switcher" />
+          </el-form-item>
+          <el-form-item label="Provider">
+            <el-select v-model="policyForm.provider_id" placeholder="Select AI provider" style="width: 100%">
+              <el-option
+                v-for="item in providers"
+                :key="item.id"
+                :label="`${item.name} / ${item.model_name}`"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Exchange Account">
+            <el-select v-model="policyForm.exchange_account_id" placeholder="Select exchange account" style="width: 100%">
+              <el-option
+                v-for="item in exchangeAccounts"
+                :key="item.id"
+                :label="`${item.account_alias} / ${item.exchange}${item.is_testnet ? ' (testnet)' : ''}`"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Symbol">
+            <el-input v-model="policyForm.symbol" placeholder="BTCUSDT / BTC-USDT-SWAP" />
+          </el-form-item>
+          <el-form-item label="Interval">
+            <el-segmented v-model="policyForm.interval" :options="intervalOptions" />
+          </el-form-item>
+          <el-form-item label="Candidate Strategies">
+            <el-select
+              v-model="policyForm.strategy_ids"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="Choose grid or DCA versions"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="item in editableStrategies"
+                :key="item.id"
+                :label="`${item.name} / ${item.strategy_type} / ${item.status}`"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Allowed Actions">
+            <el-checkbox-group v-model="policyForm.allowed_actions">
+              <el-checkbox label="activate_strategy">Switch to a candidate strategy</el-checkbox>
+              <el-checkbox label="stop_strategy">Stop a running candidate</el-checkbox>
+              <el-checkbox label="create_strategy_version">Generate and use a tuned new version</el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+          <el-form-item label="Execution Mode">
+            <el-radio-group v-model="policyForm.execution_mode">
+              <el-radio-button label="dry_run">Dry Run</el-radio-button>
+              <el-radio-button label="auto">Auto</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="Policy Status">
+            <el-radio-group v-model="policyForm.status">
+              <el-radio-button label="disabled">Disabled</el-radio-button>
+              <el-radio-button label="enabled">Enabled</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="Decision Interval (s)">
+            <el-input-number v-model="policyForm.decision_interval_seconds" :min="30" :max="3600" :step="30" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="Minimum Confidence">
+            <el-slider v-model="policyForm.minimum_confidence" :min="0" :max="1" :step="0.05" show-input />
+          </el-form-item>
+          <el-form-item label="Max Actions / Hour">
+            <el-input-number v-model="policyForm.max_actions_per_hour" :min="1" :max="120" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="Custom Prompt">
+            <el-input
+              v-model="policyForm.custom_prompt"
+              type="textarea"
+              :rows="5"
+              placeholder="Optional extra policy instructions for the model"
+            />
+          </el-form-item>
+          <el-space wrap>
+            <el-button type="primary" :loading="policySaving" @click="savePolicy">
+              {{ policyForm.id ? "Update Policy" : "Create Policy" }}
+            </el-button>
+            <el-button @click="resetPolicyForm">Reset</el-button>
+          </el-space>
+        </el-form>
       </section>
-    </div>
+    </template>
   </AppShell>
 </template>
 
@@ -405,6 +442,8 @@ const stepUpRemainingLabel = computed(() => {
 const editableStrategies = computed(() =>
   strategies.value.filter((item) => item.strategy_type === "grid" || item.strategy_type === "dca")
 );
+const enabledPolicyCount = computed(() => policies.value.filter((item) => item.status === "enabled").length);
+const autoPolicyCount = computed(() => policies.value.filter((item) => item.execution_mode === "auto").length);
 
 function setFeedback(message: string, type: "success" | "warning" | "error" | "info" = "info") {
   feedbackMessage.value = message;
@@ -415,7 +454,7 @@ async function ensureSessionOrRedirect() {
   try {
     await ensureSession();
   } catch {
-    router.push("/login");
+    router.push("/auth");
     throw new Error("Login expired. Please sign in again.");
   }
 }
@@ -675,17 +714,14 @@ async function disablePolicy(row: AiPolicyItem) {
   }
 }
 
-function toDashboard() {
-  router.push("/dashboard");
+function formatAllowedActions(actions: string[]) {
+  if (!actions?.length) {
+    return "-";
+  }
+  return actions
+    .map((item) => item.replaceAll("_", " "))
+    .join(", ");
 }
-
-function toStrategies() {
-  router.push("/strategies");
-}
-
-onMounted(async () => {
-  await reloadAll();
-});
 
 function formatDecisionSummary(row: AiDecisionItem) {
   const generatedStrategyId = Number(row.execution_result?.generated_strategy_id || 0);
@@ -695,30 +731,19 @@ function formatDecisionSummary(row: AiDecisionItem) {
   }
   return row.rationale || message || "-";
 }
+
+onMounted(async () => {
+  await reloadAll();
+});
 </script>
 
 <style scoped>
-.ai-grid {
-  margin-top: 16px;
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+.ai-toolbar-link {
+  min-width: 144px;
 }
 
-.section-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.settings-copy {
-  margin: 8px 0 0;
+.policy-actions-copy {
   color: var(--aq-ink-soft);
-  line-height: 1.6;
-}
-
-.settings-form {
-  margin-top: 14px;
+  line-height: 1.55;
 }
 </style>
