@@ -100,7 +100,7 @@
       <div v-if="!policies.length && !loading" class="aq-empty-state">
         <div>
           <h3>No autopilot policies configured yet.</h3>
-          <p>After you save a provider and at least one grid or DCA strategy, create a policy to run dry-run evaluations or full automatic switching.</p>
+          <p>After you save a provider and at least one grid, DCA, or Combo strategy, create a policy to run dry-run evaluations or full automatic switching.</p>
         </div>
       </div>
 
@@ -440,7 +440,9 @@ const stepUpRemainingLabel = computed(() => {
 });
 
 const editableStrategies = computed(() =>
-  strategies.value.filter((item) => item.strategy_type === "grid" || item.strategy_type === "dca")
+  strategies.value.filter((item) =>
+    item.strategy_type === "grid" || item.strategy_type === "dca" || item.strategy_type === "combo_grid_dca"
+  )
 );
 const enabledPolicyCount = computed(() => policies.value.filter((item) => item.status === "enabled").length);
 const autoPolicyCount = computed(() => policies.value.filter((item) => item.execution_mode === "auto").length);

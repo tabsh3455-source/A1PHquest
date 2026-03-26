@@ -262,8 +262,9 @@ def _strategy_process(
     _push_event(events, status="starting", event_kind="state")
     try:
         context = _load_launch_context(user_id=user_id, strategy_id=strategy_id)
-        # The API guarantees only grid/dca live startup, but worker defends against stale data.
-        if context.strategy_type not in {"grid", "dca"}:
+        # The API guarantees only live-enabled runtime startup, but worker still
+        # defends against stale strategy rows or mismatched template state.
+        if context.strategy_type not in {"grid", "dca", "combo_grid_dca"}:
             raise RuntimeError(f"strategy_type '{context.strategy_type}' is not enabled for live runtime")
         if context.exchange not in {"binance", "okx"}:
             raise RuntimeError(f"exchange '{context.exchange}' is not supported for live runtime")
@@ -381,7 +382,7 @@ def _setup_runtime_strategy(
     emit_trace,
 ) -> str:
     """
-    Register and start runtime strategy instance for grid/dca.
+    Register and start runtime strategy instance for grid, dca, or combo grid+dca.
 
     We keep strategy logic minimal but wire the full CTA lifecycle:
     add_strategy -> init_strategy -> start_strategy.
@@ -516,7 +517,7 @@ def _build_runtime_strategy_class(strategy_type: str, *, emit_trace):
         """
         Shared runtime strategy hooks for live CTA process.
 
-        The subclasses below implement concrete grid/dca behaviors so runtime
+        The subclasses below implement concrete runtime behaviors so runtime
         process is not only "connected" but can also exercise real CTA order APIs.
         """
 
@@ -652,44 +653,10 @@ def _build_runtime_strategy_class(strategy_type: str, *, emit_trace):
             if last_price <= 0:
                 return
             try:
-                buy_prices, sell_prices = _compute_grid_order_prices(
-                    reference_price=last_price,
-                    grid_count=int(self.grid_count),
-                    grid_step_pct=float(self.grid_step_pct),
-                    max_levels=int(self.max_grid_levels),
-                )
-                if not buy_prices and not sell_prices:
+                self.planned_order_count = _seed_grid_orders_for_runtime(self, reference_price=last_price)
+                if not self.planned_order_count:
                     return
-                for price in buy_prices:
-                    order_refs = self.buy(price, float(self.base_order_size))
-                    self._record_order_submission(
-                        side="BUY",
-                        price=price,
-                        volume=float(self.base_order_size),
-                        order_refs=order_refs,
-                    )
-                for price in sell_prices:
-                    order_refs = self.sell(price, float(self.base_order_size))
-                    self._record_order_submission(
-                        side="SELL",
-                        price=price,
-                        volume=float(self.base_order_size),
-                        order_refs=order_refs,
-                    )
                 self.grid_seeded = True
-                self.planned_order_count = len(buy_prices) + len(sell_prices)
-                self.write_log(
-                    f"grid seeded around {last_price:.8f}, orders={self.planned_order_count}"
-                )
-                self._emit_trace(
-                    "grid_seeded",
-                    {
-                        "reference_price": last_price,
-                        "planned_order_count": self.planned_order_count,
-                        "buy_levels": len(buy_prices),
-                        "sell_levels": len(sell_prices),
-                    },
-                )
                 self.put_event()
             except Exception as exc:
                 self._record_error(exc)
@@ -719,44 +686,81 @@ def _build_runtime_strategy_class(strategy_type: str, *, emit_trace):
             self.put_event()
 
         def on_tick(self, tick) -> None:  # pragma: no cover - runtime callback
-            now_ts = time.time()
-            if self.next_run_ts and now_ts < self.next_run_ts:
-                return
-
             last_price = float(getattr(tick, "last_price", 0.0) or 0.0)
-            volume = _compute_dca_order_volume(
-                last_price=last_price,
-                amount_per_cycle=float(self.amount_per_cycle),
-                min_order_volume=float(self.min_order_volume),
-            )
-            # Even when price/volume is invalid we still advance scheduler to avoid
-            # hot loop under broken market data.
-            self.next_run_ts = now_ts + max(int(self.cycle_seconds), 1)
-            if volume <= 0:
+            if last_price <= 0:
                 return
 
             try:
-                price_offset = max(float(self.price_offset_pct), 0.0) / 100.0
-                target_price = last_price * (1 + price_offset)
-                order_refs = self.buy(target_price, volume)
-                self._record_order_submission(
-                    side="BUY",
-                    price=target_price,
-                    volume=volume,
-                    order_refs=order_refs,
-                )
-                self.write_log(
-                    f"dca order submitted price={target_price:.8f} volume={volume:.8f}"
-                )
-                self._emit_trace(
-                    "dca_cycle_executed",
-                    {
-                        "price_offset_pct": float(self.price_offset_pct),
-                        "target_price": target_price,
-                        "volume": volume,
-                        "next_run_ts": self.next_run_ts,
-                    },
-                )
+                next_run_ts = _run_dca_cycle_for_runtime(self, last_price=last_price)
+                if not next_run_ts:
+                    return
+                self.next_run_ts = next_run_ts
+                self.put_event()
+            except Exception as exc:
+                self._record_error(exc)
+
+    class RuntimeComboGridDcaStrategy(_BaseRuntimeStrategy):
+        parameters = [
+            "grid_count",
+            "grid_step_pct",
+            "base_order_size",
+            "max_grid_levels",
+            "cycle_seconds",
+            "amount_per_cycle",
+            "price_offset_pct",
+            "min_order_volume",
+        ]
+        variables = [
+            "grid_count",
+            "grid_step_pct",
+            "base_order_size",
+            "max_grid_levels",
+            "cycle_seconds",
+            "amount_per_cycle",
+            "price_offset_pct",
+            "min_order_volume",
+            "grid_seeded",
+            "planned_order_count",
+            "next_run_ts",
+            "executed_order_count",
+            "last_order_at",
+            "last_error",
+        ]
+
+        def __init__(self, cta_engine, strategy_name: str, vt_symbol: str, setting: dict[str, Any]):
+            super().__init__(cta_engine, strategy_name, vt_symbol, setting)
+            self.grid_seeded: bool = False
+            self.planned_order_count: int = 0
+            self.next_run_ts: float = 0.0
+
+        def on_start(self) -> None:
+            super().on_start()
+            self.grid_seeded = False
+            self.planned_order_count = 0
+            self.next_run_ts = 0.0
+            self.last_error = ""
+            self.put_event()
+
+        def on_tick(self, tick) -> None:  # pragma: no cover - runtime callback
+            last_price = float(getattr(tick, "last_price", 0.0) or 0.0)
+            if last_price <= 0:
+                return
+
+            if not self.grid_seeded:
+                try:
+                    self.planned_order_count = _seed_grid_orders_for_runtime(self, reference_price=last_price)
+                    self.grid_seeded = self.planned_order_count > 0
+                    if self.grid_seeded:
+                        self.put_event()
+                except Exception as exc:
+                    self._record_error(exc)
+                    return
+
+            try:
+                next_run_ts = _run_dca_cycle_for_runtime(self, last_price=last_price)
+                if next_run_ts:
+                    self.next_run_ts = next_run_ts
+                    self.put_event()
             except Exception as exc:
                 self._record_error(exc)
 
@@ -764,6 +768,8 @@ def _build_runtime_strategy_class(strategy_type: str, *, emit_trace):
         return RuntimeGridStrategy
     if strategy_type == "dca":
         return RuntimeDcaStrategy
+    if strategy_type == "combo_grid_dca":
+        return RuntimeComboGridDcaStrategy
     raise RuntimeError(f"strategy_init_failed: unsupported runtime strategy_type={strategy_type}")
 
 
@@ -793,7 +799,105 @@ def _build_runtime_strategy_setting(context: StrategyLaunchContext) -> dict[str,
             "price_offset_pct": float(config.get("price_offset_pct", 0.15)),
             "min_order_volume": float(config.get("min_order_volume", 0)),
         }
+    if context.strategy_type == "combo_grid_dca":
+        grid_count = int(config.get("grid_count", 0))
+        grid_step_pct = float(config.get("grid_step_pct", 0))
+        base_order_size = float(config.get("base_order_size", 0))
+        cycle_seconds = int(config.get("cycle_seconds", 0))
+        amount_per_cycle = float(config.get("amount_per_cycle", 0))
+        max_grid_levels = int(config.get("max_grid_levels", min(max(grid_count, 2), 40)))
+        if grid_count < 2 or grid_step_pct <= 0 or base_order_size <= 0:
+            raise RuntimeError("strategy_param_failed: invalid combo grid config")
+        if cycle_seconds <= 0 or amount_per_cycle <= 0:
+            raise RuntimeError("strategy_param_failed: invalid combo dca config")
+        return {
+            "grid_count": grid_count,
+            "grid_step_pct": grid_step_pct,
+            "base_order_size": base_order_size,
+            "max_grid_levels": min(max(max_grid_levels, 2), 100),
+            "cycle_seconds": cycle_seconds,
+            "amount_per_cycle": amount_per_cycle,
+            "price_offset_pct": float(config.get("price_offset_pct", 0.15)),
+            "min_order_volume": float(config.get("min_order_volume", 0)),
+        }
     return {}
+
+
+def _seed_grid_orders_for_runtime(strategy, *, reference_price: float) -> int:
+    buy_prices, sell_prices = _compute_grid_order_prices(
+        reference_price=reference_price,
+        grid_count=int(strategy.grid_count),
+        grid_step_pct=float(strategy.grid_step_pct),
+        max_levels=int(strategy.max_grid_levels),
+    )
+    if not buy_prices and not sell_prices:
+        return 0
+
+    for price in buy_prices:
+        order_refs = strategy.buy(price, float(strategy.base_order_size))
+        strategy._record_order_submission(
+            side="BUY",
+            price=price,
+            volume=float(strategy.base_order_size),
+            order_refs=order_refs,
+        )
+    for price in sell_prices:
+        order_refs = strategy.sell(price, float(strategy.base_order_size))
+        strategy._record_order_submission(
+            side="SELL",
+            price=price,
+            volume=float(strategy.base_order_size),
+            order_refs=order_refs,
+        )
+
+    planned_order_count = len(buy_prices) + len(sell_prices)
+    strategy.write_log(f"grid seeded around {reference_price:.8f}, orders={planned_order_count}")
+    strategy._emit_trace(
+        "grid_seeded",
+        {
+            "reference_price": reference_price,
+            "planned_order_count": planned_order_count,
+            "buy_levels": len(buy_prices),
+            "sell_levels": len(sell_prices),
+        },
+    )
+    return planned_order_count
+
+
+def _run_dca_cycle_for_runtime(strategy, *, last_price: float) -> float:
+    now_ts = time.time()
+    if getattr(strategy, "next_run_ts", 0.0) and now_ts < float(strategy.next_run_ts):
+        return 0.0
+
+    volume = _compute_dca_order_volume(
+        last_price=last_price,
+        amount_per_cycle=float(strategy.amount_per_cycle),
+        min_order_volume=float(strategy.min_order_volume),
+    )
+    next_run_ts = now_ts + max(int(strategy.cycle_seconds), 1)
+    if volume <= 0:
+        return next_run_ts
+
+    price_offset = max(float(strategy.price_offset_pct), 0.0) / 100.0
+    target_price = last_price * (1 + price_offset)
+    order_refs = strategy.buy(target_price, volume)
+    strategy._record_order_submission(
+        side="BUY",
+        price=target_price,
+        volume=volume,
+        order_refs=order_refs,
+    )
+    strategy.write_log(f"dca order submitted price={target_price:.8f} volume={volume:.8f}")
+    strategy._emit_trace(
+        "dca_cycle_executed",
+        {
+            "price_offset_pct": float(strategy.price_offset_pct),
+            "target_price": target_price,
+            "volume": volume,
+            "next_run_ts": next_run_ts,
+        },
+    )
+    return next_run_ts
 
 
 def _compute_grid_order_prices(

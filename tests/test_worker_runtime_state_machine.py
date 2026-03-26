@@ -435,6 +435,63 @@ def test_build_runtime_strategy_setting_rejects_invalid_dca_config():
         assert "strategy_param_failed" in str(exc)
 
 
+def test_build_runtime_strategy_setting_accepts_combo_grid_dca_config():
+    context = worker_runtime.StrategyLaunchContext(
+        user_id=1,
+        strategy_id=41,
+        strategy_type="combo_grid_dca",
+        config={
+            "symbol": "BTCUSDT",
+            "grid_count": 8,
+            "grid_step_pct": 0.4,
+            "base_order_size": 0.001,
+            "max_grid_levels": 10,
+            "cycle_seconds": 300,
+            "amount_per_cycle": 25,
+            "price_offset_pct": 0.2,
+            "min_order_volume": 0.0001,
+        },
+        exchange="binance",
+        is_testnet=True,
+        api_key="k",
+        api_secret="s",
+        passphrase=None,
+    )
+    setting = worker_runtime._build_runtime_strategy_setting(context)
+    assert setting["grid_count"] == 8
+    assert setting["max_grid_levels"] == 10
+    assert setting["cycle_seconds"] == 300
+    assert setting["amount_per_cycle"] == 25
+    assert setting["price_offset_pct"] == 0.2
+    assert setting["min_order_volume"] == 0.0001
+
+
+def test_build_runtime_strategy_setting_rejects_invalid_combo_grid_dca_config():
+    context = worker_runtime.StrategyLaunchContext(
+        user_id=1,
+        strategy_id=42,
+        strategy_type="combo_grid_dca",
+        config={
+            "symbol": "BTCUSDT",
+            "grid_count": 8,
+            "grid_step_pct": 0.4,
+            "base_order_size": 0.001,
+            "cycle_seconds": 0,
+            "amount_per_cycle": 25,
+        },
+        exchange="binance",
+        is_testnet=True,
+        api_key="k",
+        api_secret="s",
+        passphrase=None,
+    )
+    try:
+        worker_runtime._build_runtime_strategy_setting(context)
+        raise AssertionError("Expected RuntimeError for invalid combo DCA config")
+    except RuntimeError as exc:
+        assert "strategy_param_failed" in str(exc)
+
+
 def test_compute_grid_order_prices_returns_symmetric_ladder_and_caps_levels():
     buy_prices, sell_prices = worker_runtime._compute_grid_order_prices(
         reference_price=100,

@@ -28,7 +28,7 @@ from ..models import (
     PositionSnapshot,
     Strategy,
 )
-from ..schemas import DcaStrategyConfig, GridStrategyConfig
+from ..schemas import ComboGridDcaStrategyConfig, DcaStrategyConfig, GridStrategyConfig
 from ..services.market_data import MarketDataService, normalize_market_symbol
 from ..services.strategy_runtime_control import StrategyRuntimeControlError, StrategyRuntimeControlService
 from ..tenant import with_tenant
@@ -50,8 +50,9 @@ Rules:
 - Use only candidate strategy ids provided in the context.
 - create_strategy_version requires a target_strategy_id that points to the candidate strategy you want to clone.
 - parameter_overrides may only contain safe strategy parameters:
-  - grid: grid_count, grid_step_pct, base_order_size
-  - dca: cycle_seconds, amount_per_cycle
+  - grid: grid_count, grid_step_pct, base_order_size, max_grid_levels
+  - dca: cycle_seconds, amount_per_cycle, price_offset_pct, min_order_volume
+  - combo_grid_dca: grid_count, grid_step_pct, base_order_size, max_grid_levels, cycle_seconds, amount_per_cycle, price_offset_pct, min_order_volume
 - Never change exchange_account_id or symbol.
 - If market state is unclear or confidence is low, choose hold.
 - Prefer minimal switching. Do not churn strategies without a clear advantage.
@@ -60,8 +61,18 @@ Rules:
 
 _AI_MUTATING_ACTIONS = {"activate_strategy", "stop_strategy", "create_strategy_version"}
 _ALLOWED_OVERRIDE_FIELDS = {
-    "grid": {"grid_count", "grid_step_pct", "base_order_size"},
-    "dca": {"cycle_seconds", "amount_per_cycle"},
+    "grid": {"grid_count", "grid_step_pct", "base_order_size", "max_grid_levels"},
+    "dca": {"cycle_seconds", "amount_per_cycle", "price_offset_pct", "min_order_volume"},
+    "combo_grid_dca": {
+        "grid_count",
+        "grid_step_pct",
+        "base_order_size",
+        "max_grid_levels",
+        "cycle_seconds",
+        "amount_per_cycle",
+        "price_offset_pct",
+        "min_order_volume",
+    },
 }
 
 
@@ -939,8 +950,10 @@ def _prepare_generated_strategy_preview(
     try:
         if strategy_type == "grid":
             validated = GridStrategyConfig.model_validate(merged_config).model_dump()
-        else:
+        elif strategy_type == "dca":
             validated = DcaStrategyConfig.model_validate(merged_config).model_dump()
+        else:
+            validated = ComboGridDcaStrategyConfig.model_validate(merged_config).model_dump()
     except ValidationError as exc:
         first_error = exc.errors()[0] if exc.errors() else {}
         error_path = ".".join(str(item) for item in first_error.get("loc", []))

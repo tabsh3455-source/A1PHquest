@@ -169,7 +169,7 @@ async def start_strategy(
 
     template = _resolve_strategy_template_for_strategy(strategy)
     config = _validate_existing_strategy(strategy, template)
-    if not template.live_supported or strategy.strategy_type not in {"grid", "dca"}:
+    if not template.live_supported or strategy.strategy_type not in {"grid", "dca", "combo_grid_dca"}:
         raise HTTPException(
             status_code=400,
             detail=f"template '{template.template_key}' is not enabled for live runtime yet",

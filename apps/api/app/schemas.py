@@ -323,7 +323,7 @@ class OrderCancelResponse(BaseModel):
 class StrategyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     template_key: str | None = Field(default=None, min_length=1, max_length=64)
-    strategy_type: Literal["grid", "dca", "funding_arbitrage", "spot_future_arbitrage", "custom"] | None = None
+    strategy_type: Literal["grid", "dca", "combo_grid_dca", "funding_arbitrage", "spot_future_arbitrage", "custom"] | None = None
     config: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -338,7 +338,7 @@ class StrategyCreateRequest(BaseModel):
 class StrategyUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     template_key: str | None = Field(default=None, min_length=1, max_length=64)
-    strategy_type: Literal["grid", "dca", "funding_arbitrage", "spot_future_arbitrage", "custom"] | None = None
+    strategy_type: Literal["grid", "dca", "combo_grid_dca", "funding_arbitrage", "spot_future_arbitrage", "custom"] | None = None
     config: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -409,11 +409,14 @@ class GridStrategyConfig(BaseStrategyConfig):
     grid_count: int = Field(ge=2, le=1000)
     grid_step_pct: float = Field(gt=0, le=100)
     base_order_size: float = Field(gt=0)
+    max_grid_levels: int = Field(ge=2, le=100, default=40)
 
 
 class DcaStrategyConfig(BaseStrategyConfig):
     cycle_seconds: int = Field(gt=0, le=86_400)
     amount_per_cycle: float = Field(gt=0)
+    price_offset_pct: float = Field(ge=0, le=100, default=0.15)
+    min_order_volume: float = Field(ge=0, default=0)
 
 
 class FuturesGridStrategyConfig(GridStrategyConfig):
@@ -425,8 +428,11 @@ class ComboGridDcaStrategyConfig(BaseStrategyConfig):
     grid_count: int = Field(ge=2, le=1000)
     grid_step_pct: float = Field(gt=0, le=100)
     base_order_size: float = Field(gt=0)
+    max_grid_levels: int = Field(ge=2, le=100, default=40)
     cycle_seconds: int = Field(gt=0, le=86_400)
     amount_per_cycle: float = Field(gt=0)
+    price_offset_pct: float = Field(ge=0, le=100, default=0.15)
+    min_order_volume: float = Field(ge=0, default=0)
 
 
 class RebalanceStrategyConfig(BaseStrategyConfig):
