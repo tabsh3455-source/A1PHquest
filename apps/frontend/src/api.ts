@@ -681,6 +681,64 @@ export async function listStrategyTemplates() {
   return resp.data as StrategyTemplateItem[];
 }
 
+export const WORKFLOW_READINESS_REFRESH_EVENT = "a1phquest:workflow-readiness:refresh";
+
+export function notifyWorkflowReadinessRefresh() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new Event(WORKFLOW_READINESS_REFRESH_EVENT));
+}
+
+export type WorkflowReadinessAction = {
+  code: string;
+  label: string;
+  path: string;
+  description: string | null;
+};
+
+export type WorkflowExchangeCoverage = {
+  total: number;
+  live: number;
+  testnet: number;
+};
+
+export type WorkflowExchangeSummary = {
+  total: number;
+  live: number;
+  testnet: number;
+  by_exchange: Record<string, WorkflowExchangeCoverage>;
+};
+
+export type WorkflowLiveTemplateItem = {
+  template_key: string;
+  display_name: string;
+};
+
+export type WorkflowAiReadiness = {
+  provider_count: number;
+  policy_count: number;
+  auto_enabled_count: number;
+};
+
+export type WorkflowReadinessResponse = {
+  authenticated: boolean;
+  enrollment_required: boolean;
+  has_risk_rule: boolean;
+  exchange_accounts_summary: WorkflowExchangeSummary;
+  live_supported_templates: WorkflowLiveTemplateItem[];
+  ai_ready: WorkflowAiReadiness;
+  next_required_actions: WorkflowReadinessAction[];
+  strategy_instances_total: number;
+  live_strategy_instances_total: number;
+  running_live_strategy_instances_total: number;
+};
+
+export async function getWorkflowReadiness() {
+  const resp = await http.get("/api/workflow/readiness");
+  return resp.data as WorkflowReadinessResponse;
+}
+
 export type AiProviderItem = {
   id: number;
   name: string;

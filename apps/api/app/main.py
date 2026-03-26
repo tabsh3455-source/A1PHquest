@@ -12,7 +12,7 @@ from sqlalchemy.engine import Connection
 from .config import get_settings
 from .csrf import CSRFMiddleware
 from .db import SessionLocal, engine
-from .routers import ai, auth, events, exchange_accounts, market, ops, orders, public_market, risk, strategies, strategy_templates, system_config, ws
+from .routers import ai, auth, events, exchange_accounts, market, ops, orders, public_market, risk, strategies, strategy_templates, system_config, workflow, ws
 from .same_host_cors import SameHostCORSMiddleware
 from .services.ai_autopilot import AiAutopilotService
 from .services.market_data import MarketDataService
@@ -174,4 +174,5 @@ app.include_router(strategies.router)
 app.include_router(strategy_templates.router)
 app.include_router(system_config.router)
 app.include_router(risk.router)
+app.include_router(workflow.router)
 app.include_router(ws.router)

@@ -10,6 +10,8 @@
       <router-link v-if="!session" class="aq-auth-link market-auth-link" to="/auth">Sign in to trade</router-link>
     </template>
 
+    <WorkflowReadinessBar />
+
     <section class="market-hero aq-panel aq-fade-up">
       <div class="market-hero-copy">
         <span class="market-kicker">Public Market Workspace</span>
@@ -48,7 +50,7 @@
       <div class="aq-title-row">
         <div>
           <h2>Template Launchpad</h2>
-          <p class="aq-subtitle">Turn the currently selected market into a saved strategy draft or live-ready version.</p>
+          <p class="aq-subtitle">Turn the current market into a prefilled live-supported strategy: spot grid, DCA, combo, or futures grid.</p>
         </div>
       </div>
 
@@ -89,7 +91,8 @@
         </div>
         <el-button type="primary" @click="openTemplate('spot_grid')">Create Spot Grid</el-button>
         <el-button @click="openTemplate('dca')">Create DCA</el-button>
-        <el-button @click="openTemplate('signal_bot')">Create Signal Draft</el-button>
+        <el-button @click="openTemplate('combo_grid_dca')">Create Combo Grid + DCA</el-button>
+        <el-button @click="openTemplate('futures_grid')">Create Futures Grid</el-button>
       </section>
     </template>
   </AppShell>
@@ -100,6 +103,7 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import StrategyCandleChart from "../components/StrategyCandleChart.vue";
+import WorkflowReadinessBar from "../components/WorkflowReadinessBar.vue";
 import { listPublicMarketSymbols, listStrategyTemplates, useSessionState, type StrategyTemplateItem, type PublicMarketSymbolItem } from "../api";
 
 const router = useRouter();
@@ -111,6 +115,7 @@ const marketType = ref<"spot" | "perp">("spot");
 const symbol = ref("BTCUSDT");
 const symbols = ref<PublicMarketSymbolItem[]>([]);
 const featuredTemplates = ref<StrategyTemplateItem[]>([]);
+const launchTemplateOrder = ["spot_grid", "dca", "combo_grid_dca", "futures_grid"];
 
 const exchangeOptions = [
   { label: "Binance", value: "binance" },
@@ -132,7 +137,10 @@ async function loadSymbols() {
 
 async function loadTemplates() {
   const templates = await listStrategyTemplates();
-  featuredTemplates.value = templates.slice(0, 6);
+  const byKey = new Map(templates.map((item) => [item.template_key, item] as const));
+  featuredTemplates.value = launchTemplateOrder
+    .map((key) => byKey.get(key))
+    .filter((item): item is StrategyTemplateItem => Boolean(item));
 }
 
 function openTemplate(templateKey: string) {

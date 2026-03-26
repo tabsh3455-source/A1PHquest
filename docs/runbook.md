@@ -58,6 +58,8 @@
      - `deploy/p16_soak_smoke_health.json`
      - `deploy/p16_soak_smoke_stats.log`
      - `deploy/p16_soak_smoke_report.json`
+4. Before production approval, run documentation consistency check:
+   - Ensure `README.md`, `HANDOFF.md`, and `docs/api.md` all match the current shipped interfaces and runtime behavior.
 
 ## 7) Ops Snapshot
 

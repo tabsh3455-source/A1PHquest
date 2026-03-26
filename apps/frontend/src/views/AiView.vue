@@ -8,6 +8,8 @@
       <el-button type="primary" :loading="loading" @click="reloadAll">Refresh</el-button>
     </template>
 
+    <WorkflowReadinessBar />
+
     <el-alert
       v-if="feedbackMessage"
       :title="feedbackMessage"
@@ -22,6 +24,37 @@
       show-icon
       class="aq-fade-up"
     />
+    <div v-if="!riskRuleConfigured" class="ai-risk-cta aq-fade-up">
+      <el-button size="small" @click="goToSettings">Open Risk Settings</el-button>
+    </div>
+
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
+          <h2>Autopilot Quickstart</h2>
+          <p class="aq-section-copy">
+            Use the shortest setup sequence: create a provider, create a policy, then run one dry-run decision.
+          </p>
+        </div>
+      </div>
+      <div class="aq-note-list">
+        <div class="aq-note-row">
+          <strong>Step 1: Provider</strong>
+          <small>{{ providers.length ? "Ready. At least one provider is configured." : "Missing. Add a provider in the editor." }}</small>
+          <el-button v-if="!providers.length" size="small" @click="scrollToBlock('ai-provider-editor')">Go to Provider Editor</el-button>
+        </div>
+        <div class="aq-note-row">
+          <strong>Step 2: Policy</strong>
+          <small>{{ policies.length ? "Ready. Policy scope exists." : "Missing. Add a policy after provider setup." }}</small>
+          <el-button v-if="providers.length && !policies.length" size="small" @click="scrollToBlock('ai-policy-editor')">Go to Policy Editor</el-button>
+        </div>
+        <div class="aq-note-row">
+          <strong>Step 3: Dry-run</strong>
+          <small>{{ hasDryRunEvidence ? "Ready. Decision trail has at least one dry-run/manual record." : "Run one dry-run to validate policy behavior." }}</small>
+          <el-button v-if="policies.length && !hasDryRunEvidence" size="small" :loading="quickRunLoading" @click="runFirstDryRun">Run first dry-run</el-button>
+        </div>
+      </div>
+    </section>
 
     <section class="aq-panel aq-fade-up">
       <div class="aq-section-header">
@@ -75,23 +108,42 @@
         </div>
       </div>
 
-      <el-table v-else :data="providers" style="width: 100%" size="small">
-        <el-table-column prop="name" label="Provider" min-width="170" />
-        <el-table-column prop="model_name" label="Model" min-width="140" />
-        <el-table-column prop="base_url" label="Endpoint" min-width="220" />
-        <el-table-column label="State" width="110">
-          <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'info'">
-              {{ row.is_active ? "Active" : "Disabled" }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Actions" width="90">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="editProvider(row)">Edit</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <div v-else class="aq-stack">
+        <div class="ai-table-desktop">
+          <el-table :data="providers" style="width: 100%" size="small">
+            <el-table-column prop="name" label="Provider" min-width="170" />
+            <el-table-column prop="model_name" label="Model" min-width="140" />
+            <el-table-column prop="base_url" label="Endpoint" min-width="220" />
+            <el-table-column label="State" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.is_active ? 'success' : 'info'">
+                  {{ row.is_active ? "Active" : "Disabled" }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Actions" width="90">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="editProvider(row)">Edit</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div class="ai-cards-mobile">
+          <article v-for="row in providers" :key="row.id" class="aq-soft-block aq-stack">
+            <div class="aq-title-row">
+              <div>
+                <h3>{{ row.name }}</h3>
+                <p class="aq-form-note">{{ row.model_name }}</p>
+              </div>
+              <el-tag :type="row.is_active ? 'success' : 'info'">{{ row.is_active ? "Active" : "Disabled" }}</el-tag>
+            </div>
+            <div class="aq-inline-meta">
+              <span>{{ row.base_url }}</span>
+            </div>
+            <el-button size="small" @click="editProvider(row)">Edit Provider</el-button>
+          </article>
+        </div>
+      </div>
     </section>
 
     <section class="aq-panel aq-fade-up">
@@ -111,65 +163,89 @@
         </div>
       </div>
 
-      <el-table v-else :data="policies" style="width: 100%">
-        <el-table-column prop="name" label="Policy" min-width="190" />
-        <el-table-column label="Scope" min-width="220">
-          <template #default="{ row }">
-            {{ row.symbol }} / {{ row.interval }} / acct {{ row.exchange_account_id }}
-          </template>
-        </el-table-column>
-        <el-table-column label="Mode" width="110">
-          <template #default="{ row }">
-            <el-tag :type="row.execution_mode === 'auto' ? 'warning' : 'info'">
-              {{ row.execution_mode === "auto" ? "Auto" : "Dry Run" }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Status" width="110">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'enabled' ? 'success' : 'info'">
-              {{ row.status }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Allowed Actions" min-width="210">
-          <template #default="{ row }">
-            <span class="policy-actions-copy">{{ formatAllowedActions(row.allowed_actions) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Last Run" min-width="160">
-          <template #default="{ row }">{{ row.last_run_at || "-" }}</template>
-        </el-table-column>
-        <el-table-column label="Actions" min-width="290" fixed="right">
-          <template #default="{ row }">
+      <div v-else class="aq-stack">
+        <div class="ai-table-desktop">
+          <el-table :data="policies" style="width: 100%">
+            <el-table-column prop="name" label="Policy" min-width="190" />
+            <el-table-column label="Scope" min-width="220">
+              <template #default="{ row }">
+                {{ row.symbol }} / {{ row.interval }} / acct {{ row.exchange_account_id }}
+              </template>
+            </el-table-column>
+            <el-table-column label="Mode" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.execution_mode === 'auto' ? 'warning' : 'info'">
+                  {{ row.execution_mode === "auto" ? "Auto" : "Dry Run" }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Status" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'enabled' ? 'success' : 'info'">
+                  {{ row.status }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Allowed Actions" min-width="210">
+              <template #default="{ row }">
+                <span class="policy-actions-copy">{{ formatAllowedActions(row.allowed_actions) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Last Run" min-width="160">
+              <template #default="{ row }">{{ row.last_run_at || "-" }}</template>
+            </el-table-column>
+            <el-table-column label="Actions" min-width="290" fixed="right">
+              <template #default="{ row }">
+                <el-space wrap>
+                  <el-button link type="primary" @click="editPolicy(row)">Edit</el-button>
+                  <el-button link @click="runPolicy(row, true)">Dry Run</el-button>
+                  <el-button v-if="row.execution_mode === 'auto'" link type="warning" @click="runPolicy(row, false)">
+                    Execute Now
+                  </el-button>
+                  <el-button
+                    v-if="row.status === 'enabled'"
+                    link
+                    type="danger"
+                    :loading="policyActionId === row.id && policyActionKind === 'disable'"
+                    @click="disablePolicy(row)"
+                  >
+                    Disable
+                  </el-button>
+                  <el-button
+                    v-else
+                    link
+                    type="success"
+                    :loading="policyActionId === row.id && policyActionKind === 'enable'"
+                    @click="enablePolicy(row)"
+                  >
+                    Enable
+                  </el-button>
+                </el-space>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div class="ai-cards-mobile">
+          <article v-for="row in policies" :key="row.id" class="aq-soft-block aq-stack">
+            <div class="aq-title-row">
+              <div>
+                <h3>{{ row.name }}</h3>
+                <p class="aq-form-note">{{ row.symbol }} / {{ row.interval }} / acct {{ row.exchange_account_id }}</p>
+              </div>
+              <el-tag :type="row.status === 'enabled' ? 'success' : 'info'">{{ row.status }}</el-tag>
+            </div>
+            <div class="aq-inline-meta">
+              <span>mode={{ row.execution_mode }}</span>
+              <span>actions={{ formatAllowedActions(row.allowed_actions) }}</span>
+            </div>
             <el-space wrap>
-              <el-button link type="primary" @click="editPolicy(row)">Edit</el-button>
-              <el-button link @click="runPolicy(row, true)">Dry Run</el-button>
-              <el-button v-if="row.execution_mode === 'auto'" link type="warning" @click="runPolicy(row, false)">
-                Execute Now
-              </el-button>
-              <el-button
-                v-if="row.status === 'enabled'"
-                link
-                type="danger"
-                :loading="policyActionId === row.id && policyActionKind === 'disable'"
-                @click="disablePolicy(row)"
-              >
-                Disable
-              </el-button>
-              <el-button
-                v-else
-                link
-                type="success"
-                :loading="policyActionId === row.id && policyActionKind === 'enable'"
-                @click="enablePolicy(row)"
-              >
-                Enable
-              </el-button>
+              <el-button size="small" @click="editPolicy(row)">Edit</el-button>
+              <el-button size="small" @click="runPolicy(row, true)">Dry Run</el-button>
+              <el-button v-if="row.execution_mode === 'auto'" size="small" type="warning" @click="runPolicy(row, false)">Execute</el-button>
             </el-space>
-          </template>
-        </el-table-column>
-      </el-table>
+          </article>
+        </div>
+      </div>
     </section>
 
     <section class="aq-panel aq-fade-up">
@@ -182,25 +258,46 @@
         </div>
       </div>
 
-      <el-table :data="decisions" style="width: 100%">
-        <el-table-column prop="created_at" label="Time" min-width="170" />
-        <el-table-column prop="policy_id" label="Policy" width="80" />
-        <el-table-column prop="status" label="Status" width="110" />
-        <el-table-column prop="action" label="Action" width="160" />
-        <el-table-column label="Target" width="120">
-          <template #default="{ row }">{{ row.target_strategy_id || "-" }}</template>
-        </el-table-column>
-        <el-table-column label="Confidence" width="110">
-          <template #default="{ row }">{{ Number(row.confidence || 0).toFixed(2) }}</template>
-        </el-table-column>
-        <el-table-column label="Summary" min-width="300">
-          <template #default="{ row }">{{ formatDecisionSummary(row) }}</template>
-        </el-table-column>
-      </el-table>
+      <div class="aq-stack">
+        <div class="ai-table-desktop">
+          <el-table :data="decisions" style="width: 100%">
+            <el-table-column prop="created_at" label="Time" min-width="170" />
+            <el-table-column prop="policy_id" label="Policy" width="80" />
+            <el-table-column prop="status" label="Status" width="110" />
+            <el-table-column prop="action" label="Action" width="160" />
+            <el-table-column label="Target" width="120">
+              <template #default="{ row }">{{ row.target_strategy_id || "-" }}</template>
+            </el-table-column>
+            <el-table-column label="Confidence" width="110">
+              <template #default="{ row }">{{ Number(row.confidence || 0).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="Summary" min-width="300">
+              <template #default="{ row }">{{ formatDecisionSummary(row) }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div class="ai-cards-mobile">
+          <article v-for="row in decisions" :key="row.id" class="aq-soft-block aq-stack">
+            <div class="aq-title-row">
+              <div>
+                <h3>{{ row.action }}</h3>
+                <p class="aq-form-note">{{ row.created_at }}</p>
+              </div>
+              <el-tag>{{ row.status }}</el-tag>
+            </div>
+            <div class="aq-inline-meta">
+              <span>policy={{ row.policy_id }}</span>
+              <span>confidence={{ Number(row.confidence || 0).toFixed(2) }}</span>
+              <span>target={{ row.target_strategy_id || "-" }}</span>
+            </div>
+            <div class="aq-form-note">{{ formatDecisionSummary(row) }}</div>
+          </article>
+        </div>
+      </div>
     </section>
 
     <template #inspector>
-      <section class="aq-soft-block aq-stack">
+      <section id="ai-provider-editor" class="aq-soft-block aq-stack">
         <div>
           <h3>Control Token</h3>
           <p class="aq-form-note">Provider edits, policy edits, and manual AI runs all require a fresh 2FA step-up token.</p>
@@ -220,7 +317,7 @@
         </el-form>
       </section>
 
-      <section class="aq-soft-block aq-stack">
+      <section id="ai-policy-editor" class="aq-soft-block aq-stack">
         <div class="aq-title-row">
           <div>
             <h3>Provider Editor</h3>
@@ -370,6 +467,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import WorkflowReadinessBar from "../components/WorkflowReadinessBar.vue";
 import {
   createAiPolicy,
   createAiProvider,
@@ -382,6 +480,7 @@ import {
   listAiProviders,
   listExchangeAccounts,
   listStrategies,
+  notifyWorkflowReadinessRefresh,
   requestStepUpToken,
   runAiPolicy,
   updateAiPolicy,
@@ -398,6 +497,7 @@ const loading = ref(false);
 const providerSaving = ref(false);
 const policySaving = ref(false);
 const stepUpLoading = ref(false);
+const quickRunLoading = ref(false);
 const policyActionId = ref<number | null>(null);
 const policyActionKind = ref<"enable" | "disable" | null>(null);
 const feedbackMessage = ref("");
@@ -458,10 +558,25 @@ const editableStrategies = computed(() =>
 );
 const enabledPolicyCount = computed(() => policies.value.filter((item) => item.status === "enabled").length);
 const autoPolicyCount = computed(() => policies.value.filter((item) => item.execution_mode === "auto").length);
+const hasDryRunEvidence = computed(() =>
+  decisions.value.some((item) =>
+    String(item.status || "").toLowerCase() === "dry_run" ||
+    String(item.trigger_source || "").toLowerCase() === "manual"
+  )
+);
 
 function setFeedback(message: string, type: "success" | "warning" | "error" | "info" = "info") {
   feedbackMessage.value = message;
   feedbackType.value = type;
+}
+
+function scrollToBlock(id: string) {
+  const target = document.getElementById(id);
+  target?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function goToSettings() {
+  router.push("/settings");
 }
 
 async function ensureSessionOrRedirect() {
@@ -630,6 +745,7 @@ async function saveProvider() {
     }
     resetProviderForm();
     await reloadAll();
+    notifyWorkflowReadinessRefresh();
   } catch (error: any) {
     setFeedback(error?.response?.data?.detail || error?.message || "Failed to save AI provider.", "error");
   } finally {
@@ -681,6 +797,7 @@ async function savePolicy() {
     }
     resetPolicyForm();
     await reloadAll();
+    notifyWorkflowReadinessRefresh();
   } catch (error: any) {
     setFeedback(error?.response?.data?.detail || error?.message || "Failed to save AI policy.", "error");
   } finally {
@@ -706,6 +823,20 @@ async function runPolicy(row: AiPolicyItem, dryRunOverride: boolean) {
   }
 }
 
+async function runFirstDryRun() {
+  const targetPolicy = policies.value[0];
+  if (!targetPolicy) {
+    setFeedback("Create a policy first before running a dry-run.", "warning");
+    return;
+  }
+  quickRunLoading.value = true;
+  try {
+    await runPolicy(targetPolicy, true);
+  } finally {
+    quickRunLoading.value = false;
+  }
+}
+
 async function enablePolicy(row: AiPolicyItem) {
   if (row.execution_mode === "auto" && !riskRuleConfigured.value) {
     setFeedback("Risk rule setup is required before enabling auto policies.", "warning");
@@ -718,6 +849,7 @@ async function enablePolicy(row: AiPolicyItem) {
     await enableAiPolicy(row.id, ensureStepUpToken());
     setFeedback(`Policy ${row.name} enabled. Scheduler can now run it automatically.`, "success");
     await reloadAll();
+    notifyWorkflowReadinessRefresh();
   } catch (error: any) {
     setFeedback(error?.response?.data?.detail || error?.message || "Failed to enable AI policy.", "error");
   } finally {
@@ -734,6 +866,7 @@ async function disablePolicy(row: AiPolicyItem) {
     await disableAiPolicy(row.id, ensureStepUpToken());
     setFeedback(`Policy ${row.name} disabled.`, "success");
     await reloadAll();
+    notifyWorkflowReadinessRefresh();
   } catch (error: any) {
     setFeedback(error?.response?.data?.detail || error?.message || "Failed to disable AI policy.", "error");
   } finally {
@@ -773,5 +906,24 @@ onMounted(async () => {
 .policy-actions-copy {
   color: var(--aq-ink-soft);
   line-height: 1.55;
+}
+
+.ai-risk-cta {
+  margin-top: 8px;
+}
+
+.ai-cards-mobile {
+  display: none;
+  gap: 10px;
+}
+
+@media (max-width: 960px) {
+  .ai-table-desktop {
+    display: none;
+  }
+
+  .ai-cards-mobile {
+    display: grid;
+  }
 }
 </style>

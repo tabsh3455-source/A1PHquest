@@ -26,7 +26,7 @@
       <div v-if="!isReady" class="aq-empty-state">
         <div>
           <strong>Waiting for market scope</strong>
-          <p>Select an exchange and symbol to load live candles.</p>
+          <p>{{ props.emptyMessage }}</p>
         </div>
       </div>
       <div v-else ref="chartRoot" class="chart-root" />
@@ -469,5 +469,19 @@ onBeforeUnmount(() => {
 
 .chart-root {
   min-height: 440px;
+}
+
+@media (max-width: 960px) {
+  .chart-shell {
+    min-height: 500px;
+  }
+
+  .chart-toolbar {
+    flex-direction: column;
+  }
+
+  .chart-root {
+    min-height: 360px;
+  }
 }
 </style>

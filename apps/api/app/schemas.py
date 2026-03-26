@@ -582,6 +582,50 @@ class PublicMarketSymbolsResponse(BaseModel):
     symbols: list[PublicMarketSymbolItem] = Field(default_factory=list)
 
 
+class WorkflowReadinessAction(BaseModel):
+    code: str
+    label: str
+    path: str
+    description: str | None = None
+
+
+class WorkflowExchangeCoverage(BaseModel):
+    total: int = 0
+    live: int = 0
+    testnet: int = 0
+
+
+class WorkflowExchangeAccountSummary(BaseModel):
+    total: int = 0
+    live: int = 0
+    testnet: int = 0
+    by_exchange: dict[str, WorkflowExchangeCoverage] = Field(default_factory=dict)
+
+
+class WorkflowLiveTemplateItem(BaseModel):
+    template_key: str
+    display_name: str
+
+
+class WorkflowAiReadiness(BaseModel):
+    provider_count: int = 0
+    policy_count: int = 0
+    auto_enabled_count: int = 0
+
+
+class WorkflowReadinessResponse(BaseModel):
+    authenticated: bool = False
+    enrollment_required: bool = False
+    has_risk_rule: bool = False
+    exchange_accounts_summary: WorkflowExchangeAccountSummary = Field(default_factory=WorkflowExchangeAccountSummary)
+    live_supported_templates: list[WorkflowLiveTemplateItem] = Field(default_factory=list)
+    ai_ready: WorkflowAiReadiness = Field(default_factory=WorkflowAiReadiness)
+    next_required_actions: list[WorkflowReadinessAction] = Field(default_factory=list)
+    strategy_instances_total: int = 0
+    live_strategy_instances_total: int = 0
+    running_live_strategy_instances_total: int = 0
+
+
 class StrategyTemplateFieldOption(BaseModel):
     label: str
     value: str

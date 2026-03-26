@@ -12,6 +12,7 @@
   - local `AES` master key
   - `Google Authenticator` login verification
   - step-up token required for high-risk operations
+  - `HttpOnly cookie + CSRF` auth transport
 
 ## 2. Fixed Constraints
 
@@ -44,6 +45,7 @@ Repo layout:
 Latest verified baseline on `2026-03-26`:
 
 - Targeted backend regression suite passed (`risk + strategy runtime + strategy control`): `28 passed`
+- Full backend regression suite passed: `274 passed`
 - Frontend Docker production build passed
 - CTA runtime start/stop flow remains working in Docker
 - WS replay remains DB-backed capable (`memory` and `db` modes)
@@ -106,6 +108,7 @@ Eventing and replay:
 - [ws_manager.py](C:/Users/Administrator/Documents/New%20project%202/apps/api/app/ws_manager.py)
 - [events.py](C:/Users/Administrator/Documents/New%20project%202/apps/api/app/routers/events.py)
 - [events.py](C:/Users/Administrator/Documents/New%20project%202/apps/api/app/events.py)
+- [workflow.py](C:/Users/Administrator/Documents/New%20project%202/apps/api/app/routers/workflow.py)
 
 Security:
 
@@ -172,8 +175,20 @@ Priority order:
 1. Continue `P19/P20` style operational hardening
 2. Expand ops/read-only observability around replay backlog and runtime drift
 3. Finalize release/runbook workflows for Linux VPS deployment
-4. Keep replay/event-order behavior verified in Docker gates
-5. Continue Lighter reconciliation hardening without changing signing boundaries
+4. Keep docs (`README.md` / `HANDOFF.md` / `docs/api.md`) synchronized with shipped API/runtime behavior before production release
+5. Keep replay/event-order behavior verified in Docker gates
+6. Continue Lighter reconciliation hardening without changing signing boundaries
+
+## 9.1 Standard Trading Workflow
+
+Recommended user-facing operation sequence:
+
+1. Register and complete Google Authenticator enrollment
+2. Add exchange account
+3. Configure risk rule (live fail-closed gate)
+4. Create strategy from live-supported templates (`spot_grid`, `futures_grid`, `dca`, `combo_grid_dca`)
+5. Issue step-up token and start strategy runtime
+6. Configure AI provider/policy and execute dry-run before auto mode
 
 ## 10. Known Operational Notes
 

@@ -30,6 +30,9 @@ jobs:
       - name: Run backend tests
         run: pytest -q
 
+      - name: Run workflow readiness and closed-loop smoke tests
+        run: pytest -q tests/test_workflow_readiness_api.py tests/test_workflow_closed_loop_smoke.py
+
       - name: Run Bandit
         run: bandit -r apps/api/app -q
 

@@ -334,6 +334,7 @@ import {
   getRiskRule,
   getMarketDataSettings,
   hasConfiguredRiskRule,
+  notifyWorkflowReadinessRefresh,
   requestStepUpToken,
   resetMarketDataSettings,
   upsertRiskRule,
@@ -544,6 +545,7 @@ async function saveRiskRule() {
     const response = await upsertRiskRule({ ...riskForm }, ensureStepUpToken());
     riskRuleConfigured.value = true;
     applyRiskRule(response, response.updated_at || null);
+    notifyWorkflowReadinessRefresh();
     setFeedback("Risk rule saved. Live orders and live strategy start are now unblocked.", "success");
   } catch (error: any) {
     setFeedback(error?.response?.data?.detail || error?.message || "Failed to save risk rule.", "error");

@@ -71,6 +71,12 @@ def main() -> None:
     email = f"{username}@example.com"
     password = "StrongPass123!"
 
+    unauth_readiness_status, unauth_readiness_data = request_json("GET", "/api/workflow/readiness")
+    assert unauth_readiness_status == 200, (
+        f"workflow readiness (unauth) failed: {unauth_readiness_status}, {unauth_readiness_data}"
+    )
+    assert (unauth_readiness_data.get("next_required_actions") or [{}])[0].get("code") == "sign_in"
+
     register_start_status, register_start_data = request_json(
         "POST",
         "/api/auth/register/start",
@@ -92,6 +98,16 @@ def main() -> None:
         f"register complete failed: {register_complete_status}, {register_complete_data}"
     )
     csrf_token = str(register_complete_data["csrf_token"])
+
+    post_signup_readiness_status, post_signup_readiness_data = request_json(
+        "GET",
+        "/api/workflow/readiness",
+        csrf_token=csrf_token,
+    )
+    assert post_signup_readiness_status == 200, (
+        f"workflow readiness after signup failed: {post_signup_readiness_status}, {post_signup_readiness_data}"
+    )
+    assert (post_signup_readiness_data.get("next_required_actions") or [{}])[0].get("code") == "add_exchange_account"
 
     no_otp_status, no_otp_login_data = request_json(
         "POST",
@@ -150,6 +166,17 @@ def main() -> None:
     assert account_status == 201, f"exchange account create failed: {account_status}, {account_data}"
     exchange_account_id = int(account_data["id"])
 
+    post_account_readiness_status, post_account_readiness_data = request_json(
+        "GET",
+        "/api/workflow/readiness",
+        csrf_token=csrf_token,
+    )
+    assert post_account_readiness_status == 200, (
+        f"workflow readiness after account failed: {post_account_readiness_status}, {post_account_readiness_data}"
+    )
+    post_account_action_codes = [item.get("code") for item in post_account_readiness_data.get("next_required_actions", [])]
+    assert "create_strategy" in post_account_action_codes
+
     create_strategy_status, create_strategy_data = request_json(
         "POST",
         "/api/strategies",
@@ -172,6 +199,17 @@ def main() -> None:
         f"strategy create failed: {create_strategy_status}, {create_strategy_data}"
     )
     strategy_id = int(create_strategy_data["id"])
+
+    post_strategy_readiness_status, post_strategy_readiness_data = request_json(
+        "GET",
+        "/api/workflow/readiness",
+        csrf_token=csrf_token,
+    )
+    assert post_strategy_readiness_status == 200, (
+        f"workflow readiness after strategy failed: {post_strategy_readiness_status}, {post_strategy_readiness_data}"
+    )
+    post_strategy_action_codes = [item.get("code") for item in post_strategy_readiness_data.get("next_required_actions", [])]
+    assert "start_strategy" in post_strategy_action_codes
 
     # Refresh step-up token before high-risk runtime start in case the first token is near expiry.
     step_up_refresh_status, step_up_refresh_data = request_json(
@@ -198,7 +236,26 @@ def main() -> None:
     assert str(start_strategy_data.get("runtime_ref") or "").strip(), "runtime_ref should be non-empty"
     assert str(start_strategy_data.get("status") or "") in {"starting", "running", "failed"}
 
+    final_readiness_status, final_readiness_data = request_json(
+        "GET",
+        "/api/workflow/readiness",
+        csrf_token=csrf_token,
+    )
+    assert final_readiness_status == 200, (
+        f"workflow readiness final failed: {final_readiness_status}, {final_readiness_data}"
+    )
+    assert bool(final_readiness_data.get("has_risk_rule")) is True
+    assert int(final_readiness_data.get("running_live_strategy_instances_total") or 0) >= 1
+    final_action_codes = [item.get("code") for item in final_readiness_data.get("next_required_actions", [])]
+    assert "create_ai_provider" in final_action_codes
+    assert "create_ai_policy" in final_action_codes
+
     result = {
+        "workflow_readiness_unauth_status": unauth_readiness_status,
+        "workflow_readiness_post_signup_status": post_signup_readiness_status,
+        "workflow_readiness_post_account_status": post_account_readiness_status,
+        "workflow_readiness_post_strategy_status": post_strategy_readiness_status,
+        "workflow_readiness_final_status": final_readiness_status,
         "register_start_status": register_start_status,
         "register_complete_status": register_complete_status,
         "login_without_otp_status": no_otp_status,

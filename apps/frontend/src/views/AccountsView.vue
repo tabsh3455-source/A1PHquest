@@ -69,31 +69,54 @@
         </div>
       </div>
 
-      <el-table v-else :data="rows" v-loading="loading" style="width: 100%">
-        <el-table-column prop="account_alias" label="Alias" min-width="180" />
-        <el-table-column prop="exchange" label="Exchange" width="120" />
-        <el-table-column label="Mode" width="110">
-          <template #default="{ row }">
-            <el-tag :type="row.is_testnet ? 'warning' : 'success'">
-              {{ row.is_testnet ? "Testnet" : "Live" }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="created_at" label="Created" min-width="180" />
-        <el-table-column label="Status Trail" min-width="280">
-          <template #default="{ row }">
-            <span class="account-status-copy">{{ rowStatus[row.id] || "No validation or sync run yet." }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Actions" min-width="200" fixed="right">
-          <template #default="{ row }">
+      <div v-else class="aq-stack">
+        <div class="accounts-table-desktop">
+          <el-table :data="rows" v-loading="loading" style="width: 100%">
+            <el-table-column prop="account_alias" label="Alias" min-width="180" />
+            <el-table-column prop="exchange" label="Exchange" width="120" />
+            <el-table-column label="Mode" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.is_testnet ? 'warning' : 'success'">
+                  {{ row.is_testnet ? "Testnet" : "Live" }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="Created" min-width="180" />
+            <el-table-column label="Status Trail" min-width="280">
+              <template #default="{ row }">
+                <span class="account-status-copy">{{ rowStatus[row.id] || "No validation or sync run yet." }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Actions" min-width="200" fixed="right">
+              <template #default="{ row }">
+                <el-space wrap>
+                  <el-button size="small" :loading="isBusy(row.id, 'validate')" @click="runValidate(row.id)">Validate</el-button>
+                  <el-button size="small" type="primary" :loading="isBusy(row.id, 'sync')" @click="runSync(row.id)">Sync</el-button>
+                </el-space>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <div class="accounts-cards-mobile">
+          <article v-for="row in rows" :key="row.id" class="aq-soft-block aq-stack">
+            <div class="aq-title-row">
+              <div>
+                <h3>{{ row.account_alias }}</h3>
+                <p class="aq-form-note">{{ row.exchange }} / {{ row.created_at }}</p>
+              </div>
+              <el-tag :type="row.is_testnet ? 'warning' : 'success'">
+                {{ row.is_testnet ? "Testnet" : "Live" }}
+              </el-tag>
+            </div>
+            <div class="account-status-copy">{{ rowStatus[row.id] || "No validation or sync run yet." }}</div>
             <el-space wrap>
               <el-button size="small" :loading="isBusy(row.id, 'validate')" @click="runValidate(row.id)">Validate</el-button>
               <el-button size="small" type="primary" :loading="isBusy(row.id, 'sync')" @click="runSync(row.id)">Sync</el-button>
             </el-space>
-          </template>
-        </el-table-column>
-      </el-table>
+          </article>
+        </div>
+      </div>
     </section>
 
     <section class="aq-panel aq-fade-up">
@@ -211,6 +234,7 @@ import {
   createExchangeAccount,
   ensureSession,
   listExchangeAccounts,
+  notifyWorkflowReadinessRefresh,
   requestStepUpToken,
   syncExchangeAccount,
   type ExchangeAccountCreatePayload,
@@ -335,6 +359,7 @@ async function submitCreate() {
     form.api_key = "";
     form.api_secret = "";
     form.passphrase = "";
+    notifyWorkflowReadinessRefresh();
     await loadAccounts();
   } catch (error: any) {
     setMessage(error?.response?.data?.detail || error?.message || "Failed to create account.", "error");
@@ -384,5 +409,20 @@ onMounted(loadAccounts);
 .account-status-copy {
   color: var(--aq-ink-soft);
   line-height: 1.6;
+}
+
+.accounts-cards-mobile {
+  display: none;
+  gap: 10px;
+}
+
+@media (max-width: 960px) {
+  .accounts-table-desktop {
+    display: none;
+  }
+
+  .accounts-cards-mobile {
+    display: grid;
+  }
 }
 </style>

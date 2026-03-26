@@ -2,12 +2,20 @@
 
 ## Auth
 
-- `POST /api/auth/register`
-- `POST /api/auth/login` (for users with 2FA configured, `otp_code` is required)
+- `POST /api/auth/register/start`
+- `POST /api/auth/register/complete`
+- `POST /api/auth/login` (for users with 2FA configured, `otp_code` or `recovery_code` is required)
+- `GET /api/auth/session`
+- `POST /api/auth/2fa/enroll/start`
+- `POST /api/auth/2fa/enroll/complete`
 - `POST /api/auth/2fa/setup`
 - `POST /api/auth/2fa/verify`
 - `POST /api/auth/2fa/step-up` (returns short-lived `step_up_token` for high-risk endpoints)
 - `POST /api/auth/logout`
+- Login/session response now includes:
+  - `authenticated`
+  - `enrollment_required`
+- Auth transport uses `HttpOnly` access cookie + CSRF token flow.
 - Login anomaly alerts now include suppression policy (cooldown + hourly cap) in audit details:
   - `suppressed_reason`, `alert_sent`, `alerts_sent_last_hour_before`.
 
@@ -61,18 +69,45 @@
 - `POST /api/strategies/{strategy_id}/stop`
 - `GET /api/strategies/{strategy_id}/runtime`
 - `GET /api/strategies/{strategy_id}/runtime/consistency`
-- Live startup currently only supports `strategy_type=grid|dca` with strong config checks.
+- Live startup currently supports `strategy_type=grid|futures_grid|dca|combo_grid_dca` with template config validation and risk fail-closed gate.
 - `GET /api/strategies/{strategy_id}/runtime` returns `last_heartbeat` and `last_error`.
 - `runtime/consistency` compares DB runtime observability fields (`status,last_heartbeat,last_error`) with worker-supervisor view.
 - If `worker-supervisor` is unavailable, start/stop returns `503` (no local fake-running fallback).
 - Strategy start/stop now require 2FA-enabled user session.
 - Strategy start/stop now require `X-StepUp-Token`.
 
+## Strategy Templates
+
+- `GET /api/strategy-templates`
+- Template registry includes `live_supported` and `draft_only` templates.
+- Current live-supported templates:
+  - `spot_grid`
+  - `futures_grid`
+  - `dca`
+  - `combo_grid_dca`
+
 ## Events Replay
 
 - `GET /api/events/replay?after_seq=<n>&since_seconds=<n>&limit=<n>`
 - Returns in-memory recent event history for reconnect replay.
 - Replay remains user-scoped and only for short disconnect windows.
+
+## Market Data
+
+- Private market history:
+  - `GET /api/market/klines`
+- Public market history/symbols:
+  - `GET /api/public/market/klines`
+  - `GET /api/public/market/symbols`
+- Public market WebSocket:
+  - `GET /ws/market`
+  - supports `subscribe_market` / `unsubscribe_market`
+- User event WebSocket:
+  - `GET /ws/events`
+  - supports user-scoped market subscription plus strategy/runtime events.
+- Market stream events:
+  - `market_candle`
+  - `market_stream_status`
 
 ## Ops
 
@@ -95,6 +130,18 @@
   - fixed-window error trend buckets (`error_trend_last_hour`) for charting.
   - drift sample rows (`runtime_drift_samples`) to quickly locate mismatched strategy/runtime states.
   - `alert_items` with same normalized signal structure as user metrics endpoint.
+
+## Workflow Readiness
+
+- `GET /api/workflow/readiness`
+- Aggregated status for the trading loop:
+  - `authenticated`
+  - `enrollment_required`
+  - `has_risk_rule`
+  - `exchange_accounts_summary`
+  - `live_supported_templates`
+  - `ai_ready`
+  - `next_required_actions`
 
 ## Risk Rules
 

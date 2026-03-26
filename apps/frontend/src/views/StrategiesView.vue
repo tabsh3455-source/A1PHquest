@@ -8,6 +8,8 @@
       <router-link class="aq-auth-link" to="/market">Open Market</router-link>
     </template>
 
+    <WorkflowReadinessBar />
+
     <StrategyCandleChart
       :mode="chartMode"
       :exchange-account-id="chartExchangeAccountId"
@@ -74,79 +76,146 @@
           show-icon
         />
 
-        <el-table
-          :data="rows"
-          style="margin-top: 14px"
-          v-loading="loading"
-          highlight-current-row
-          :row-class-name="rowClassName"
-          @row-click="selectStrategy"
-        >
-          <el-table-column prop="name" label="Name" min-width="180" />
-          <el-table-column prop="template_display_name" label="Template" min-width="160" />
-          <el-table-column label="Scope" width="110">
-            <template #default="{ row }">{{ row.market_scope }}</template>
-          </el-table-column>
-          <el-table-column label="Symbol" width="140">
-            <template #default="{ row }">{{ String(row.config.symbol || "-") }}</template>
-          </el-table-column>
-          <el-table-column label="Direction" width="120">
-            <template #default="{ row }">{{ strategyDirectionLabel(row) }}</template>
-          </el-table-column>
-          <el-table-column label="Leverage" width="100">
-            <template #default="{ row }">{{ strategyLeverageLabel(row) }}</template>
-          </el-table-column>
-          <el-table-column label="Account" min-width="170">
-            <template #default="{ row }">{{ accountLabel(row.config.exchange_account_id) }}</template>
-          </el-table-column>
-          <el-table-column label="Status" width="110">
-            <template #default="{ row }">
+        <section class="aq-soft-block aq-stack strategy-block-guide">
+          <div>
+            <h3>Startup Guide</h3>
+            <p class="aq-form-note">Follow this order to avoid blocked starts: account -> risk rule -> step-up token -> start runtime.</p>
+          </div>
+          <div class="aq-note-list">
+            <div class="aq-note-row">
+              <strong>1) Exchange account</strong>
+              <small>{{ accounts.length ? "Ready." : "Missing. Add an account first." }}</small>
+              <el-button v-if="!accounts.length" size="small" @click="goTo('/accounts')">Go to Accounts</el-button>
+            </div>
+            <div class="aq-note-row">
+              <strong>2) Risk rule</strong>
+              <small>{{ riskRuleConfigured ? "Ready." : "Missing. Live runtime is fail-closed until risk setup is saved." }}</small>
+              <el-button v-if="!riskRuleConfigured" size="small" @click="goTo('/settings')">Go to Settings</el-button>
+            </div>
+            <div class="aq-note-row">
+              <strong>3) Step-up token</strong>
+              <small>{{ stepUpTokenValid ? `Ready (${stepUpRemainingLabel}).` : "Missing. Issue one before start/stop." }}</small>
+              <el-button v-if="!stepUpTokenValid" size="small" @click="scrollToRuntimeControl">Go to Runtime Control</el-button>
+            </div>
+          </div>
+        </section>
+
+        <div class="strategies-table-desktop">
+          <el-table
+            :data="rows"
+            style="margin-top: 14px"
+            v-loading="loading"
+            highlight-current-row
+            :row-class-name="rowClassName"
+            @row-click="selectStrategy"
+          >
+            <el-table-column prop="name" label="Name" min-width="180" />
+            <el-table-column prop="template_display_name" label="Template" min-width="160" />
+            <el-table-column label="Scope" width="110">
+              <template #default="{ row }">{{ row.market_scope }}</template>
+            </el-table-column>
+            <el-table-column label="Symbol" width="140">
+              <template #default="{ row }">{{ String(row.config.symbol || "-") }}</template>
+            </el-table-column>
+            <el-table-column label="Direction" width="120">
+              <template #default="{ row }">{{ strategyDirectionLabel(row) }}</template>
+            </el-table-column>
+            <el-table-column label="Leverage" width="100">
+              <template #default="{ row }">{{ strategyLeverageLabel(row) }}</template>
+            </el-table-column>
+            <el-table-column label="Account" min-width="170">
+              <template #default="{ row }">{{ accountLabel(row.config.exchange_account_id) }}</template>
+            </el-table-column>
+            <el-table-column label="Status" width="110">
+              <template #default="{ row }">
+                <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Run" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.live_supported ? (riskRuleConfigured ? 'success' : 'warning') : 'info'">
+                  {{ row.live_supported ? (riskRuleConfigured ? "Live" : "Blocked") : "Draft" }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Actions" min-width="340" fixed="right">
+              <template #default="{ row }">
+                <el-space wrap>
+                  <el-button size="small" @click.stop="editStrategy(row)">Edit</el-button>
+                  <el-button size="small" @click.stop="duplicateStrategy(row)">Duplicate</el-button>
+                  <el-button size="small" @click.stop="inspectRuntime(row)">Runtime</el-button>
+                  <el-button
+                    v-if="row.live_supported && !riskRuleConfigured"
+                    size="small"
+                    disabled
+                  >
+                    Risk setup required
+                  </el-button>
+                  <el-button
+                    v-else-if="row.live_supported && isRunnable(row.status)"
+                    size="small"
+                    type="primary"
+                    :loading="actionLoadingId === row.id && actionMode === 'start'"
+                    @click.stop="startSelectedStrategy(row)"
+                  >
+                    Start
+                  </el-button>
+                  <el-button
+                    v-else-if="row.live_supported"
+                    size="small"
+                    type="danger"
+                    :loading="actionLoadingId === row.id && actionMode === 'stop'"
+                    @click.stop="stopSelectedStrategy(row)"
+                  >
+                    Stop
+                  </el-button>
+                  <el-button v-else size="small" disabled>Draft only</el-button>
+                </el-space>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <div class="strategies-cards-mobile">
+          <article v-for="row in rows" :key="row.id" class="aq-soft-block aq-stack strategy-mobile-card" @click="selectStrategy(row)">
+            <div class="aq-title-row">
+              <div>
+                <h3>{{ row.name }}</h3>
+                <p class="aq-form-note">{{ row.template_display_name }} / {{ String(row.config.symbol || "-") }}</p>
+              </div>
               <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="Run" width="110">
-            <template #default="{ row }">
-              <el-tag :type="row.live_supported ? (riskRuleConfigured ? 'success' : 'warning') : 'info'">
-                {{ row.live_supported ? (riskRuleConfigured ? "Live" : "Blocked") : "Draft" }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="Actions" min-width="340" fixed="right">
-            <template #default="{ row }">
-              <el-space wrap>
-                <el-button size="small" @click.stop="editStrategy(row)">Edit</el-button>
-                <el-button size="small" @click.stop="duplicateStrategy(row)">Duplicate</el-button>
-                <el-button size="small" @click.stop="inspectRuntime(row)">Runtime</el-button>
-                <el-button
-                  v-if="row.live_supported && !riskRuleConfigured"
-                  size="small"
-                  disabled
-                >
-                  Risk setup required
-                </el-button>
-                <el-button
-                  v-else-if="row.live_supported && isRunnable(row.status)"
-                  size="small"
-                  type="primary"
-                  :loading="actionLoadingId === row.id && actionMode === 'start'"
-                  @click.stop="startSelectedStrategy(row)"
-                >
-                  Start
-                </el-button>
-                <el-button
-                  v-else-if="row.live_supported"
-                  size="small"
-                  type="danger"
-                  :loading="actionLoadingId === row.id && actionMode === 'stop'"
-                  @click.stop="stopSelectedStrategy(row)"
-                >
-                  Stop
-                </el-button>
-                <el-button v-else size="small" disabled>Draft only</el-button>
-              </el-space>
-            </template>
-          </el-table-column>
-        </el-table>
+            </div>
+            <div class="aq-inline-meta">
+              <span>direction={{ strategyDirectionLabel(row) }}</span>
+              <span>leverage={{ strategyLeverageLabel(row) }}</span>
+              <span>account={{ accountLabel(row.config.exchange_account_id) }}</span>
+            </div>
+            <el-space wrap>
+              <el-button size="small" @click.stop="editStrategy(row)">Edit</el-button>
+              <el-button size="small" @click.stop="duplicateStrategy(row)">Duplicate</el-button>
+              <el-button size="small" @click.stop="inspectRuntime(row)">Runtime</el-button>
+              <el-button
+                v-if="row.live_supported && riskRuleConfigured && isRunnable(row.status)"
+                size="small"
+                type="primary"
+                :loading="actionLoadingId === row.id && actionMode === 'start'"
+                @click.stop="startSelectedStrategy(row)"
+              >
+                Start
+              </el-button>
+              <el-button
+                v-else-if="row.live_supported && riskRuleConfigured"
+                size="small"
+                type="danger"
+                :loading="actionLoadingId === row.id && actionMode === 'stop'"
+                @click.stop="stopSelectedStrategy(row)"
+              >
+                Stop
+              </el-button>
+              <el-button v-else size="small" disabled>{{ row.live_supported ? "Risk setup required" : "Draft only" }}</el-button>
+            </el-space>
+          </article>
+        </div>
       </section>
     </div>
 
@@ -241,7 +310,7 @@
         </el-form>
       </section>
 
-      <section class="aq-soft-block aq-stack">
+      <section id="runtime-control-panel" class="aq-soft-block aq-stack">
         <div>
           <h3>Runtime Control</h3>
           <p class="aq-form-note">Starting or stopping a live-supported strategy still requires a fresh step-up token.</p>
@@ -291,9 +360,10 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import StrategyCandleChart from "../components/StrategyCandleChart.vue";
+import WorkflowReadinessBar from "../components/WorkflowReadinessBar.vue";
 import {
   createStrategy,
   ensureSession,
@@ -303,6 +373,7 @@ import {
   listExchangeAccounts,
   listStrategies,
   listStrategyTemplates,
+  notifyWorkflowReadinessRefresh,
   requestStepUpToken,
   startStrategy as startStrategyRequest,
   stopStrategy as stopStrategyRequest,
@@ -314,6 +385,7 @@ import {
 } from "../api";
 
 const route = useRoute();
+const router = useRouter();
 
 const rows = ref<StrategyItem[]>([]);
 const accounts = ref<ExchangeAccountItem[]>([]);
@@ -335,6 +407,7 @@ const stepUpCode = ref("");
 const stepUpToken = ref("");
 const stepUpExpireAt = ref<number | null>(null);
 const selectedTemplateKey = ref("spot_grid");
+const routePresetApplied = ref(false);
 const editorExchange = ref<"binance" | "okx">((String(route.query.exchange || "binance").toLowerCase() === "okx" ? "okx" : "binance"));
 const editorMarketType = ref<"spot" | "perp">(String(route.query.market_type || "spot").toLowerCase() === "perp" ? "perp" : "spot");
 
@@ -441,8 +514,10 @@ function buildDefaultConfig(template: StrategyTemplateItem) {
   for (const field of template.fields) {
     nextConfig[field.key] = field.default ?? (field.input_type === "switch" ? false : "");
   }
+  const hintedExchange = String(route.query.exchange || "").trim().toLowerCase();
+  const hintedAccount = accounts.value.find((item) => item.exchange === hintedExchange);
   nextConfig.symbol = String(route.query.symbol || nextConfig.symbol || "BTCUSDT").toUpperCase();
-  nextConfig.exchange_account_id = accounts.value[0]?.id ?? nextConfig.exchange_account_id ?? null;
+  nextConfig.exchange_account_id = hintedAccount?.id ?? accounts.value[0]?.id ?? nextConfig.exchange_account_id ?? null;
   return nextConfig;
 }
 
@@ -487,6 +562,38 @@ function duplicateStrategy(row: StrategyItem) {
   setFeedback("Loaded the selected strategy into the composer as a new version.", "info");
 }
 
+function goTo(path: string) {
+  router.push(path);
+}
+
+function scrollToRuntimeControl() {
+  const section = document.getElementById("runtime-control-panel");
+  section?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function applyRouteTemplatePreset() {
+  if (!templates.value.length) {
+    return;
+  }
+
+  const requestedTemplate = String(route.query.template || "").trim();
+  const templateExists = templates.value.some((item) => item.template_key === requestedTemplate);
+  if (templateExists) {
+    selectedTemplateKey.value = requestedTemplate;
+  }
+
+  editorExchange.value = String(route.query.exchange || editorExchange.value).toLowerCase() === "okx" ? "okx" : "binance";
+  editorMarketType.value = String(route.query.market_type || editorMarketType.value).toLowerCase() === "perp" ? "perp" : "spot";
+
+  applySelectedTemplate();
+  form.config.symbol = String(route.query.symbol || form.config.symbol || "BTCUSDT").trim().toUpperCase();
+  if (accounts.value.length && !form.config.exchange_account_id) {
+    const hintedExchange = String(route.query.exchange || "").trim().toLowerCase();
+    const hintedAccount = accounts.value.find((item) => item.exchange === hintedExchange);
+    form.config.exchange_account_id = hintedAccount?.id || accounts.value[0].id;
+  }
+}
+
 async function ensureStepUpToken() {
   if (!stepUpTokenValid.value) {
     throw new Error("Issue a fresh control token before starting or stopping a strategy.");
@@ -506,10 +613,10 @@ async function loadData() {
     templates.value = templatesData;
     rows.value = strategyData;
     accounts.value = accountData;
-    if (!selectedTemplate.value && templates.value.length) {
-      selectedTemplateKey.value = String(route.query.template || templates.value[0].template_key);
-    }
-    if (!Object.keys(form.config).length) {
+    if (!routePresetApplied.value) {
+      applyRouteTemplatePreset();
+      routePresetApplied.value = true;
+    } else if (!Object.keys(form.config).length) {
       applySelectedTemplate();
     }
     riskRuleConfigured.value = await hasConfiguredRiskRule();
@@ -587,6 +694,7 @@ async function saveStrategy() {
     await loadData();
     selectedStrategyId.value = saved.id;
     editingStrategyId.value = saved.id;
+    notifyWorkflowReadinessRefresh();
     setFeedback(wasEditing ? "Strategy updated." : "Strategy created.", "success");
   } catch (error: any) {
     setFeedback(getErrorMessage(error, "Failed to save strategy."), "error");
@@ -602,6 +710,7 @@ async function saveAsNewStrategy() {
     await loadData();
     selectedStrategyId.value = saved.id;
     editingStrategyId.value = saved.id;
+    notifyWorkflowReadinessRefresh();
     setFeedback("Saved as a new strategy version.", "success");
   } catch (error: any) {
     setFeedback(getErrorMessage(error, "Failed to save as new strategy."), "error");
@@ -631,6 +740,7 @@ async function startSelectedStrategy(row: StrategyItem) {
     runtimeState.value = await startStrategyRequest(row.id, await ensureStepUpToken());
     runtimeStrategyId.value = row.id;
     await loadData();
+    notifyWorkflowReadinessRefresh();
     setFeedback("Strategy started.", "success");
   } catch (error: any) {
     setFeedback(getErrorMessage(error, "Failed to start strategy."), "error");
@@ -647,6 +757,7 @@ async function stopSelectedStrategy(row: StrategyItem) {
     runtimeState.value = await stopStrategyRequest(row.id, await ensureStepUpToken());
     runtimeStrategyId.value = row.id;
     await loadData();
+    notifyWorkflowReadinessRefresh();
     setFeedback("Strategy stopped.", "success");
   } catch (error: any) {
     setFeedback(getErrorMessage(error, "Failed to stop strategy."), "error");
@@ -662,6 +773,16 @@ watch(
   () => [route.query.strategy_id, route.query.runtime_ref, rows.value.length],
   () => {
     void applyRouteStrategySelection();
+  }
+);
+
+watch(
+  () => [route.query.template, route.query.exchange, route.query.market_type, route.query.symbol].join("|"),
+  () => {
+    if (editingStrategyId.value) {
+      return;
+    }
+    applyRouteTemplatePreset();
   }
 );
 </script>
@@ -740,9 +861,31 @@ watch(
   background: var(--aq-warning);
 }
 
+.strategy-block-guide {
+  margin-top: 14px;
+}
+
+.strategies-cards-mobile {
+  display: none;
+  margin-top: 14px;
+  gap: 10px;
+}
+
+.strategy-mobile-card {
+  cursor: pointer;
+}
+
 @media (max-width: 960px) {
   .template-gallery {
     grid-template-columns: 1fr;
+  }
+
+  .strategies-table-desktop {
+    display: none;
+  }
+
+  .strategies-cards-mobile {
+    display: grid;
   }
 }
 </style>

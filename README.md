@@ -111,6 +111,7 @@ If you already manage Docker and `.env` yourself, you can still use the manual p
 - WS event payloads now include normalized envelope: `type/timestamp/resource_id/payload`.
 - WS replay endpoint is available at `GET /api/events/replay`.
 - Ops metrics endpoint is available at `GET /api/ops/metrics`.
+- Workflow readiness endpoint is available at `GET /api/workflow/readiness` for one-glance setup blockers and next actions.
 - Market data runtime settings endpoint is available at `GET/PUT/DELETE /api/system-config/market-data`.
 - Frontend settings page lets you tune low-latency market data behavior interactively without hand-editing `.env`.
 - Frontend settings page also includes risk guardrail configuration; live starts stay blocked until a risk rule is saved.
@@ -126,6 +127,17 @@ If you already manage Docker and `.env` yourself, you can still use the manual p
 - Worker runtime detects heartbeat timeout and marks runtime failed with process cleanup.
 - Docker Compose now runs one-shot `migrate` service before API startup.
 - Operations runbook is available in `docs/runbook.md`.
+
+## Standard Trading Loop
+
+The recommended setup and execution order is:
+
+1. Register and complete Google Authenticator enrollment
+2. Add exchange account
+3. Configure risk rule (live fail-closed gate)
+4. Create strategy from template
+5. Issue step-up token and start strategy runtime
+6. Configure AI provider/policy and run dry-run (then optionally enable auto mode)
 
 ## Linux VPS Stack Control
 
@@ -153,4 +165,5 @@ If you already manage Docker and `.env` yourself, you can still use the manual p
 - P20 RC gate strict checklist: `P20_CHECKLIST_STRICT=1 bash deploy/p20_rc_gate.sh`
 - P20 release checklist: `python3 deploy/p20_release_checklist.py --strict`
 - P20 release manifest: `python3 deploy/p20_release_manifest.py`
+- Release documentation consistency check: verify `README.md`, `HANDOFF.md`, and `docs/api.md` against the current shipped API/runtime behavior before production approval.
 - Legacy compatibility wrapper: `bash deploy/stack_wsl.sh ...` (internally redirects to `deploy/stack.sh`)
