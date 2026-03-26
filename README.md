@@ -102,10 +102,18 @@ cd /opt/a1phquest
 bash deploy/update-from-github.sh
 ```
 
+If you want upgrade + health/smoke verification in one step:
+
+```bash
+cd /opt/a1phquest
+bash deploy/update-and-verify.sh
+```
+
 Optional environment flags during update:
 
 - `BUILD_IMAGES=0 bash deploy/update-from-github.sh` (skip image rebuild)
 - `DEPLOY_NGINX=1 bash deploy/update-from-github.sh` (apply update and enable nginx/HTTPS)
+- `RUN_SMOKE_TEST=0 bash deploy/update-and-verify.sh` (skip API smoke test)
 
 If you already manage Docker and `.env` yourself, you can still use the manual path:
 

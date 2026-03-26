@@ -41,10 +41,18 @@ cd /opt/a1phquest
 bash deploy/update-from-github.sh
 ```
 
+Upgrade + verify (health + smoke) in one command:
+
+```bash
+cd /opt/a1phquest
+bash deploy/update-and-verify.sh
+```
+
 Optional flags:
 
 - `BUILD_IMAGES=0 bash deploy/update-from-github.sh`
 - `DEPLOY_NGINX=1 bash deploy/update-from-github.sh`
+- `RUN_SMOKE_TEST=0 bash deploy/update-and-verify.sh`
 
 ## Manual Compose Mode (Advanced)
 

@@ -25,10 +25,12 @@ from ..schemas import (
 )
 from ..services.ai_autopilot import AiAutopilotService
 from ..services.market_data import normalize_market_symbol
+from ..services.risk_service import RiskService
 from ..tenant import with_tenant
 
 router = APIRouter(prefix="/api/ai", tags=["ai-autopilot"])
 kms = build_kms_provider()
+risk_service = RiskService()
 
 
 def _get_ai_service(request: Request) -> AiAutopilotService:
@@ -139,6 +141,12 @@ def create_ai_policy(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_step_up_user),
 ):
+    _require_risk_rule_for_auto_execution(
+        db=db,
+        user_id=current_user.id,
+        execution_mode=payload.execution_mode,
+        status=payload.status,
+    )
     _validate_policy_scope(
         db=db,
         user_id=current_user.id,
@@ -193,6 +201,12 @@ def update_ai_policy(
     if not policy:
         raise HTTPException(status_code=404, detail="AI policy not found")
 
+    _require_risk_rule_for_auto_execution(
+        db=db,
+        user_id=current_user.id,
+        execution_mode=payload.execution_mode,
+        status=payload.status,
+    )
     _validate_policy_scope(
         db=db,
         user_id=current_user.id,
@@ -243,6 +257,12 @@ def enable_ai_policy(
     )
     if not policy:
         raise HTTPException(status_code=404, detail="AI policy not found")
+    _require_risk_rule_for_auto_execution(
+        db=db,
+        user_id=current_user.id,
+        execution_mode=policy.execution_mode,
+        status="enabled",
+    )
     policy.status = "enabled"
     db.add(policy)
     db.commit()
@@ -303,6 +323,17 @@ async def run_ai_policy_once(
     )
     if not policy:
         raise HTTPException(status_code=404, detail="AI policy not found")
+
+    effective_dry_run = (
+        bool(payload.dry_run_override)
+        if payload.dry_run_override is not None
+        else policy.execution_mode != "auto"
+    )
+    if not effective_dry_run and not risk_service.has_configured_rule(db, user_id=current_user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="Risk rule is required before AI auto execution",
+        )
 
     run = await _get_ai_service(request).run_policy_once(
         policy_id=policy.id,
@@ -489,3 +520,22 @@ def _safe_load_action_list(raw: str) -> list[str]:
     normalized = [str(item) for item in value if str(item) in allowed]
     order = {"activate_strategy": 0, "stop_strategy": 1, "create_strategy_version": 2}
     return sorted(set(normalized), key=lambda item: order.get(item, 99))
+
+
+def _require_risk_rule_for_auto_execution(
+    *,
+    db: Session,
+    user_id: int,
+    execution_mode: str,
+    status: str,
+) -> None:
+    if str(execution_mode) != "auto":
+        return
+    if str(status) != "enabled":
+        return
+    if risk_service.has_configured_rule(db, user_id=user_id):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Risk rule is required before enabling AI auto execution",
+    )

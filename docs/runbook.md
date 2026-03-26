@@ -17,6 +17,7 @@
 1. Pull latest GitHub code and rollout:
    - `cd /opt/a1phquest`
    - `bash deploy/update-from-github.sh`
+   - `bash deploy/update-and-verify.sh` (recommended; includes health + smoke)
    - optional fast rollout: `BUILD_IMAGES=0 bash deploy/update-from-github.sh`
 2. Verify:
    - `pytest -q`

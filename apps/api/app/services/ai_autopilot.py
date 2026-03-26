@@ -25,6 +25,7 @@ from ..models import (
     AiAutopilotPolicy,
     AiProviderCredential,
     ExchangeAccount,
+    RiskRule,
     PositionSnapshot,
     Strategy,
 )
@@ -390,6 +391,12 @@ class AiAutopilotService:
         candidates_by_id = {int(item.id): item for item in candidates}
         target_strategy = candidates_by_id.get(int(target_strategy_id or 0)) if target_strategy_id else None
         allowed_action_set = {str(item) for item in allowed_actions if str(item).strip()}
+
+        if not is_dry_run and not _has_configured_risk_rule(db, user_id=int(policy.user_id)):
+            return {
+                "blocked_reason": "risk rule is required before AI auto execution",
+                "mode": "auto",
+            }, "blocked", target_strategy_id
 
         if action not in {"hold", "activate_strategy", "stop_strategy", "create_strategy_version"}:
             return {"blocked_reason": f"unsupported action '{action}'"}, "blocked", None
@@ -922,6 +929,13 @@ def _safe_load_action_list(raw: str) -> list[str]:
     if not normalized:
         return ["activate_strategy", "stop_strategy", "create_strategy_version"]
     return sorted(normalized, key=lambda item: order[item])
+
+
+def _has_configured_risk_rule(db, *, user_id: int) -> bool:
+    return (
+        with_tenant(db.query(RiskRule), RiskRule, int(user_id)).first()
+        is not None
+    )
 
 
 def _prepare_generated_strategy_preview(

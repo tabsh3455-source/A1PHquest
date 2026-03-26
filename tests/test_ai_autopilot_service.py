@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models import AiAutopilotDecisionRun, AiAutopilotPolicy, AiProviderCredential, Base, ExchangeAccount, Strategy, User
+from app.models import AiAutopilotDecisionRun, AiAutopilotPolicy, AiProviderCredential, Base, ExchangeAccount, RiskRule, Strategy, User
 from app.services.ai_autopilot import AiAutopilotService
 from app.services.strategy_supervisor import RuntimeState
 
@@ -112,6 +112,20 @@ def _seed_policy_graph(db: Session) -> tuple[User, AiProviderCredential, Exchang
     return user, provider, account, strategy_grid, strategy_dca, policy
 
 
+def _add_risk_rule(db: Session, *, user_id: int) -> None:
+    db.add(
+        RiskRule(
+            user_id=user_id,
+            max_order_notional=1000,
+            max_daily_loss=300,
+            max_position_ratio=0.8,
+            max_cancel_rate_per_minute=60,
+            circuit_breaker_enabled=True,
+        )
+    )
+    db.commit()
+
+
 class _FakeMarketDataService:
     async def fetch_history(self, **kwargs):
         base_time = 1_710_000_000
@@ -213,7 +227,7 @@ def test_ai_autopilot_manual_dry_run_persists_decision(async_runner, monkeypatch
 def test_ai_autopilot_auto_activation_executes_selected_strategy(async_runner, monkeypatch):
     session_factory = _build_sessionmaker()
     with session_factory() as db:
-        _, _, _, strategy_grid, strategy_dca, policy = _seed_policy_graph(db)
+        user, _, _, strategy_grid, strategy_dca, policy = _seed_policy_graph(db)
         strategy_grid_id = strategy_grid.id
         strategy_dca_id = strategy_dca.id
         policy_id = policy.id
@@ -222,6 +236,7 @@ def test_ai_autopilot_auto_activation_executes_selected_strategy(async_runner, m
         strategy_grid.runtime_ref = "runtime-grid"
         db.add_all([policy, strategy_grid])
         db.commit()
+        _add_risk_rule(db, user_id=int(user.id))
 
     fake_runtime_control = _FakeRuntimeControl()
     service = AiAutopilotService(
@@ -309,7 +324,7 @@ def test_ai_autopilot_dry_run_create_strategy_version_returns_preview(async_runn
 def test_ai_autopilot_auto_create_strategy_version_generates_and_starts_new_strategy(async_runner, monkeypatch):
     session_factory = _build_sessionmaker()
     with session_factory() as db:
-        _, _, _, strategy_grid, strategy_dca, policy = _seed_policy_graph(db)
+        user, _, _, strategy_grid, strategy_dca, policy = _seed_policy_graph(db)
         strategy_grid_id = strategy_grid.id
         strategy_dca_id = strategy_dca.id
         policy_id = policy.id
@@ -318,6 +333,7 @@ def test_ai_autopilot_auto_create_strategy_version_generates_and_starts_new_stra
         strategy_grid.runtime_ref = "runtime-grid"
         db.add_all([policy, strategy_grid])
         db.commit()
+        _add_risk_rule(db, user_id=int(user.id))
 
     class _CommitAwareRuntimeControl(_FakeRuntimeControl):
         def start_strategy(self, *, db: Session, user_id: int, strategy: Strategy, reason: str):
@@ -380,15 +396,58 @@ def test_ai_autopilot_auto_create_strategy_version_generates_and_starts_new_stra
         assert generated_strategy_id in strategy_ids
 
 
-def test_ai_autopilot_blocks_disabled_action_from_policy(async_runner, monkeypatch):
+def test_ai_autopilot_auto_mode_is_blocked_without_risk_rule(async_runner, monkeypatch):
     session_factory = _build_sessionmaker()
     with session_factory() as db:
         _, _, _, strategy_grid, _, policy = _seed_policy_graph(db)
         strategy_grid_id = strategy_grid.id
         policy_id = policy.id
+        policy.execution_mode = "auto"
+        db.add(policy)
+        db.commit()
+
+    fake_runtime_control = _FakeRuntimeControl()
+    service = AiAutopilotService(
+        market_data_service=_FakeMarketDataService(),
+        ws_manager=_FakeWsManager(),
+    )
+    monkeypatch.setattr("app.services.ai_autopilot.SessionLocal", session_factory)
+    service._runtime_control = fake_runtime_control
+
+    async def _fake_call_provider(*, provider, policy, context):
+        return {"provider": "fake"}, {
+            "action": "activate_strategy",
+            "target_strategy_id": strategy_grid_id,
+            "confidence": 0.9,
+            "rationale": "switch to grid",
+        }
+
+    monkeypatch.setattr(service, "_call_provider", _fake_call_provider)
+
+    decision = async_runner(
+        service.run_policy_once(
+            policy_id=policy_id,
+            trigger_source="manual",
+            dry_run_override=False,
+        )
+    )
+
+    assert decision.status == "blocked"
+    execution_result = json.loads(decision.execution_result_json)
+    assert "risk rule is required" in str(execution_result.get("blocked_reason", "")).lower()
+    assert fake_runtime_control.started == []
+
+
+def test_ai_autopilot_blocks_disabled_action_from_policy(async_runner, monkeypatch):
+    session_factory = _build_sessionmaker()
+    with session_factory() as db:
+        user, _, _, strategy_grid, _, policy = _seed_policy_graph(db)
+        strategy_grid_id = strategy_grid.id
+        policy_id = policy.id
         policy.allowed_actions_json = json.dumps(["activate_strategy"])
         db.add(policy)
         db.commit()
+        _add_risk_rule(db, user_id=int(user.id))
 
     service = AiAutopilotService(
         market_data_service=_FakeMarketDataService(),

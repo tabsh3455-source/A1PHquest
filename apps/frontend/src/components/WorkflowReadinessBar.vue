@@ -35,7 +35,12 @@
         <span class="aq-metric-kicker">{{ t("workflow.accounts") }}</span>
         <strong class="aq-metric-value">{{ readiness.exchange_accounts_summary.total }}</strong>
         <span class="aq-metric-copy">
-          live={{ readiness.exchange_accounts_summary.live }} / testnet={{ readiness.exchange_accounts_summary.testnet }}
+          {{
+            t("workflow.accountsBreakdown", {
+              live: readiness.exchange_accounts_summary.live,
+              testnet: readiness.exchange_accounts_summary.testnet
+            })
+          }}
         </span>
       </div>
       <div class="aq-metric-tile">
@@ -49,7 +54,12 @@
         <span class="aq-metric-kicker">{{ t("workflow.ai") }}</span>
         <strong class="aq-metric-value">{{ readiness.ai_ready.policy_count }}</strong>
         <span class="aq-metric-copy">
-          providers={{ readiness.ai_ready.provider_count }}, auto={{ readiness.ai_ready.auto_enabled_count }}
+          {{
+            t("workflow.aiBreakdown", {
+              providers: readiness.ai_ready.provider_count,
+              auto: readiness.ai_ready.auto_enabled_count
+            })
+          }}
         </span>
       </div>
     </div>
@@ -64,7 +74,7 @@
 
     <div v-if="readiness?.next_required_actions?.length" class="workflow-action-tags">
       <button
-        v-for="item in readiness.next_required_actions"
+        v-for="item in localizedActions"
         :key="item.code"
         class="workflow-action-chip"
         type="button"
@@ -95,8 +105,28 @@ const readiness = ref<WorkflowReadinessResponse | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
 
-const primaryAction = computed<WorkflowReadinessAction | null>(() => readiness.value?.next_required_actions?.[0] || null);
-const secondaryAction = computed<WorkflowReadinessAction | null>(() => readiness.value?.next_required_actions?.[1] || null);
+const localizedActions = computed<WorkflowReadinessAction[]>(() => {
+  const actions = readiness.value?.next_required_actions || [];
+  return actions.map((action) => {
+    const code = String(action.code || "").trim();
+    const labelKey = code ? `workflow.actions.${code}.label` : "";
+    const descriptionKey = code ? `workflow.actions.${code}.description` : "";
+    const localizedLabel = labelKey ? t(labelKey) : "";
+    const localizedDescription = descriptionKey ? t(descriptionKey) : "";
+
+    return {
+      ...action,
+      label: localizedLabel && localizedLabel !== labelKey ? localizedLabel : action.label,
+      description:
+        localizedDescription && localizedDescription !== descriptionKey
+          ? localizedDescription
+          : action.description,
+    };
+  });
+});
+
+const primaryAction = computed<WorkflowReadinessAction | null>(() => localizedActions.value[0] || null);
+const secondaryAction = computed<WorkflowReadinessAction | null>(() => localizedActions.value[1] || null);
 
 function go(path: string) {
   const normalized = String(path || "").trim();

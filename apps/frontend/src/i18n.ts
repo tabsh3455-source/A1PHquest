@@ -71,7 +71,51 @@ const enMessages: MessageTree = {
     riskReadyCopy: "Live strategy starts are allowed.",
     riskBlockedCopy: "Live start stays fail-closed until risk rule setup.",
     ai: "AI",
-    liveTemplates: "live templates"
+    liveTemplates: "live templates",
+    accountsBreakdown: "live={live} / testnet={testnet}",
+    aiBreakdown: "providers={providers}, auto={auto}",
+    actions: {
+      sign_in: {
+        label: "Sign in or register",
+        description: "Create a session before using private accounts, strategies, and AI controls."
+      },
+      enroll_2fa: {
+        label: "Complete Google Authenticator binding",
+        description: "Protected pages stay blocked until 2FA enrollment is complete."
+      },
+      add_exchange_account: {
+        label: "Add exchange account",
+        description: "Create at least one exchange route before live strategy start."
+      },
+      configure_risk_rule: {
+        label: "Configure risk guardrails",
+        description: "Live runtime remains fail-closed until a risk rule is saved."
+      },
+      create_strategy: {
+        label: "Create first live-supported strategy",
+        description: "Use spot_grid, futures_grid, dca, or combo_grid_dca as a starting point."
+      },
+      create_ai_provider: {
+        label: "Create AI provider",
+        description: "Register one OpenAI-compatible provider endpoint first."
+      },
+      create_ai_policy: {
+        label: "Create AI policy",
+        description: "Bind account, symbol, interval, and candidate strategies before dry-run."
+      },
+      start_strategy: {
+        label: "Start one strategy instance",
+        description: "Issue a step-up token, then start a live-supported strategy."
+      },
+      enable_ai_auto: {
+        label: "Enable one auto AI policy",
+        description: "Auto mode stays disabled until you explicitly enable a policy."
+      },
+      review_ops: {
+        label: "Review Ops health",
+        description: "Core workflow prerequisites are complete. Monitor runtime health next."
+      }
+    }
   },
   chart: {
     defaultTitle: "Live Candles",
@@ -287,7 +331,51 @@ const zhOverrides: MessageTree = {
     riskReadyCopy: "允许启动实盘策略。",
     riskBlockedCopy: "未配置风险规则前，实盘保持 fail-closed。",
     ai: "AI",
-    liveTemplates: "可实盘模板"
+    liveTemplates: "可实盘模板",
+    accountsBreakdown: "实盘={live} / 测试网={testnet}",
+    aiBreakdown: "provider={providers}, auto={auto}",
+    actions: {
+      sign_in: {
+        label: "登录或注册",
+        description: "先建立会话，再使用私有账户、策略和 AI 控制能力。"
+      },
+      enroll_2fa: {
+        label: "完成 Google Authenticator 绑定",
+        description: "完成 2FA 绑定前，受保护页面会保持锁定。"
+      },
+      add_exchange_account: {
+        label: "添加交易所账户",
+        description: "至少添加一个交易通道后，才能启动实盘策略。"
+      },
+      configure_risk_rule: {
+        label: "配置风控规则",
+        description: "保存风险规则前，实盘运行保持 fail-closed。"
+      },
+      create_strategy: {
+        label: "创建首个可实盘策略",
+        description: "可从 spot_grid、futures_grid、dca、combo_grid_dca 开始。"
+      },
+      create_ai_provider: {
+        label: "创建 AI Provider",
+        description: "先注册一个 OpenAI 兼容的 Provider 端点。"
+      },
+      create_ai_policy: {
+        label: "创建 AI Policy",
+        description: "先绑定账户、标的、周期和候选策略，再进行 dry-run。"
+      },
+      start_strategy: {
+        label: "启动一个策略实例",
+        description: "先签发 step-up token，再启动可实盘策略。"
+      },
+      enable_ai_auto: {
+        label: "启用一个 AI 自动策略",
+        description: "必须显式启用 policy 后，auto 模式才会生效。"
+      },
+      review_ops: {
+        label: "查看运维健康",
+        description: "核心流程已完成，下一步建议持续观察运行健康。"
+      }
+    }
   },
   chart: {
     defaultTitle: "实时 K 线",
