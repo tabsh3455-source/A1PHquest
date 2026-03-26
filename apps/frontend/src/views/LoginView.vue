@@ -1,28 +1,28 @@
 <template>
   <AppShell
-    :title="isEnrollmentRoute ? 'Complete Google Authenticator Binding' : 'Sign in or create a secured account'"
+    :title="isEnrollmentRoute ? t('auth.titleEnroll') : t('auth.titleSignIn')"
     :subtitle="isEnrollmentRoute
-      ? 'This account must bind TOTP before it can access strategies, accounts, AI, or settings.'
-      : 'Registration now completes only after the first Google Authenticator verification, so every active account is protected from day one.'"
+      ? t('auth.subtitleEnroll')
+      : t('auth.subtitleSignIn')"
     :public-mode="true"
   >
     <div class="auth-layout aq-fade-up">
       <section class="auth-poster aq-panel">
-        <span class="auth-kicker">{{ isEnrollmentRoute ? "Mandatory 2FA" : "Unified Auth" }}</span>
-        <h2>{{ isEnrollmentRoute ? "Bind, verify, then enter the terminal." : "A trading workspace should feel secure before it feels busy." }}</h2>
+        <span class="auth-kicker">{{ isEnrollmentRoute ? t("auth.kickerMandatory") : t("auth.kickerUnified") }}</span>
+        <h2>{{ isEnrollmentRoute ? t("auth.headlineEnroll") : t("auth.headlineSignIn") }}</h2>
         <p>
           {{ isEnrollmentRoute
-            ? "A1phquest keeps you in a limited session until TOTP is verified. Public market access stays open, but the protected terminal stays locked."
-            : "Use the Market page before login, then register with username, email, password, scan the QR code, and verify the first one-time password in the same flow." }}
+            ? t("auth.bodyEnroll")
+            : t("auth.bodySignIn") }}
         </p>
         <div class="aq-grid aq-grid-2">
           <div class="aq-soft-block">
-            <span class="aq-kv-label">Session Model</span>
-            <div class="aq-kv-value">HttpOnly cookie + CSRF</div>
+            <span class="aq-kv-label">{{ t("auth.sessionModel") }}</span>
+            <div class="aq-kv-value">{{ t("auth.sessionModelValue") }}</div>
           </div>
           <div class="aq-soft-block">
-            <span class="aq-kv-label">2FA Mode</span>
-            <div class="aq-kv-value">Google Authenticator required</div>
+            <span class="aq-kv-label">{{ t("auth.twoFactorMode") }}</span>
+            <div class="aq-kv-value">{{ t("auth.twoFactorModeValue") }}</div>
           </div>
         </div>
       </section>
@@ -38,108 +38,108 @@
 
         <template v-if="isEnrollmentRoute">
           <div v-if="enrollmentRecoveryCodes.length" class="aq-stack">
-            <h3>Save your recovery codes</h3>
-            <p class="aq-subtitle">These codes are shown only once and each works once.</p>
+            <h3>{{ t("auth.saveRecoveryCodes") }}</h3>
+            <p class="aq-subtitle">{{ t("auth.recoveryCodesShownOnce") }}</p>
             <div class="recovery-grid">
               <span v-for="item in enrollmentRecoveryCodes" :key="item" class="recovery-chip">{{ item }}</span>
             </div>
-            <el-button type="primary" @click="enterWorkspace">Enter market terminal</el-button>
+            <el-button type="primary" @click="enterWorkspace">{{ t("auth.enterMarketTerminal") }}</el-button>
           </div>
 
           <div v-else-if="!enrollmentDraft" class="aq-stack">
-            <h3>Start 2FA binding</h3>
-            <p class="aq-subtitle">Generate a QR code, scan it in Google Authenticator, then verify the first OTP to unlock the rest of the app.</p>
-            <el-button type="primary" :loading="loading" @click="startEnrollment">Generate QR</el-button>
+            <h3>{{ t("auth.start2faBinding") }}</h3>
+            <p class="aq-subtitle">{{ t("auth.start2faBindingSubtitle") }}</p>
+            <el-button type="primary" :loading="loading" @click="startEnrollment">{{ t("auth.generateQr") }}</el-button>
           </div>
 
           <div v-else class="aq-stack">
             <div class="qr-panel">
               <img :src="enrollmentDraft.qr_svg_data_url" alt="Authenticator QR" class="qr-image" />
               <div class="aq-stack">
-                <strong>Scan this QR in Google Authenticator</strong>
-                <small>Manual key: {{ enrollmentDraft.otp_secret }}</small>
+                <strong>{{ t("auth.scanQr") }}</strong>
+                <small>{{ t("auth.manualKey") }}: {{ enrollmentDraft.otp_secret }}</small>
               </div>
             </div>
             <el-form label-position="top">
-              <el-form-item label="6-digit code">
-                <el-input v-model="enrollmentCode" maxlength="6" placeholder="Enter current Google Authenticator code" />
+              <el-form-item :label="t('auth.code6Digit')">
+                <el-input v-model="enrollmentCode" maxlength="6" :placeholder="t('auth.placeholderCurrentOtp')" />
               </el-form-item>
             </el-form>
-            <el-button type="primary" :loading="loading" @click="completeEnrollment">Verify and unlock</el-button>
+            <el-button type="primary" :loading="loading" @click="completeEnrollment">{{ t("auth.verifyUnlock") }}</el-button>
           </div>
         </template>
 
         <template v-else-if="mode === 'login'">
           <el-form label-position="top">
-            <el-form-item label="Username">
+            <el-form-item :label="t('auth.username')">
               <el-input v-model="username" autocomplete="username" />
             </el-form-item>
-            <el-form-item label="Password">
+            <el-form-item :label="t('auth.password')">
               <el-input v-model="password" type="password" show-password autocomplete="current-password" />
             </el-form-item>
-            <el-form-item label="Second factor">
+            <el-form-item :label="t('auth.secondFactor')">
               <el-segmented v-model="loginFactorMode" :options="loginFactorOptions" class="factor-toggle" />
             </el-form-item>
-            <el-form-item v-if="loginFactorMode === 'otp'" label="Google Authenticator Code">
-              <el-input v-model="otpCode" maxlength="6" placeholder="Required if the account is already bound" />
+            <el-form-item v-if="loginFactorMode === 'otp'" :label="t('auth.googleCode')">
+              <el-input v-model="otpCode" maxlength="6" :placeholder="t('auth.placeholderBoundOtp')" />
             </el-form-item>
-            <el-form-item v-else label="Recovery Code">
-              <el-input v-model="recoveryCode" placeholder="AQ-XXXX-XXXX" />
+            <el-form-item v-else :label="t('auth.recoveryCode')">
+              <el-input v-model="recoveryCode" :placeholder="t('auth.recoveryCode')" />
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" :loading="loading" @click="onLogin">Enter terminal</el-button>
+              <el-button type="primary" :loading="loading" @click="onLogin">{{ t("auth.enterTerminal") }}</el-button>
             </el-form-item>
           </el-form>
         </template>
 
         <template v-else>
           <div v-if="registerStep === 'credentials'" class="aq-stack">
-            <h3>Create account</h3>
+            <h3>{{ t("auth.createAccount") }}</h3>
             <el-form label-position="top">
-              <el-form-item label="Username">
+              <el-form-item :label="t('auth.username')">
                 <el-input v-model="registerUsername" autocomplete="username" />
               </el-form-item>
-              <el-form-item label="Email">
+              <el-form-item :label="t('auth.email')">
                 <el-input v-model="registerEmail" autocomplete="email" />
               </el-form-item>
-              <el-form-item label="Password">
+              <el-form-item :label="t('auth.password')">
                 <el-input v-model="registerPassword" type="password" show-password autocomplete="new-password" />
               </el-form-item>
-              <el-form-item label="Confirm Password">
+              <el-form-item :label="t('auth.confirmPassword')">
                 <el-input v-model="registerPasswordConfirm" type="password" show-password autocomplete="new-password" />
               </el-form-item>
             </el-form>
-            <el-button type="primary" :loading="loading" @click="beginRegistration">Continue to 2FA</el-button>
+            <el-button type="primary" :loading="loading" @click="beginRegistration">{{ t("auth.continue2fa") }}</el-button>
           </div>
 
           <div v-else-if="registerStep === 'verify' && registrationDraft" class="aq-stack">
-            <h3>Bind Google Authenticator</h3>
+            <h3>{{ t("auth.bindGoogleAuth") }}</h3>
             <div class="qr-panel">
               <img :src="registrationDraft.qr_svg_data_url" alt="Authenticator QR" class="qr-image" />
               <div class="aq-stack">
-                <strong>Scan before the token expires</strong>
-                <small>Manual key: {{ registrationDraft.otp_secret }}</small>
-                <small>Expires at: {{ registrationDraft.expires_at }}</small>
+                <strong>{{ t("auth.scanBeforeExpire") }}</strong>
+                <small>{{ t("auth.manualKey") }}: {{ registrationDraft.otp_secret }}</small>
+                <small>{{ t("auth.expiresAt") }}: {{ registrationDraft.expires_at }}</small>
               </div>
             </div>
             <el-form label-position="top">
-              <el-form-item label="6-digit code">
-                <el-input v-model="registerOtpCode" maxlength="6" placeholder="Enter the first Google Authenticator code" />
+              <el-form-item :label="t('auth.code6Digit')">
+                <el-input v-model="registerOtpCode" maxlength="6" :placeholder="t('auth.placeholderFirstOtp')" />
               </el-form-item>
             </el-form>
             <el-space wrap>
-              <el-button type="primary" :loading="loading" @click="finishRegistration">Verify and activate</el-button>
-              <el-button @click="resetRegistrationFlow">Start over</el-button>
+              <el-button type="primary" :loading="loading" @click="finishRegistration">{{ t("auth.verifyActivate") }}</el-button>
+              <el-button @click="resetRegistrationFlow">{{ t("auth.startOver") }}</el-button>
             </el-space>
           </div>
 
           <div v-else class="aq-stack">
-            <h3>Save your recovery codes</h3>
-            <p class="aq-subtitle">Each code works once. These are shown only this time.</p>
+            <h3>{{ t("auth.saveRecoveryCodes") }}</h3>
+            <p class="aq-subtitle">{{ t("auth.recoveryCodesShownNow") }}</p>
             <div class="recovery-grid">
               <span v-for="item in recoveryCodes" :key="item" class="recovery-chip">{{ item }}</span>
             </div>
-            <el-button type="primary" @click="enterWorkspace">Enter market terminal</el-button>
+            <el-button type="primary" @click="enterWorkspace">{{ t("auth.enterMarketTerminal") }}</el-button>
           </div>
         </template>
       </section>
@@ -151,6 +151,7 @@
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import { useI18n } from "../i18n";
 import {
   completeRegistration,
   completeTwoFactorEnrollment,
@@ -164,18 +165,19 @@ import {
 
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 
 const isEnrollmentRoute = computed(() => route.path === "/auth/enroll-2fa");
 const mode = ref<"login" | "register">("login");
-const modeOptions = [
-  { label: "Login", value: "login" },
-  { label: "Register", value: "register" }
-] as const;
+const modeOptions = computed(() => [
+  { label: t("auth.modeLogin"), value: "login" },
+  { label: t("auth.modeRegister"), value: "register" }
+]);
 const loginFactorMode = ref<"otp" | "recovery">("otp");
-const loginFactorOptions = [
-  { label: "OTP", value: "otp" },
-  { label: "Recovery", value: "recovery" }
-] as const;
+const loginFactorOptions = computed(() => [
+  { label: t("auth.otp"), value: "otp" },
+  { label: t("auth.recovery"), value: "recovery" }
+]);
 
 const username = ref("");
 const password = ref("");
@@ -220,10 +222,10 @@ async function onLogin() {
     const session = loginFactorMode.value === "recovery"
       ? await loginWithRecoveryCode(username.value.trim(), password.value, recoveryCode.value.trim())
       : await login(username.value.trim(), password.value, otpCode.value.trim() || undefined);
-    setMessage(session.enrollment_required ? "2FA enrollment is required before app access." : "Login successful.", "success");
+    setMessage(session.enrollment_required ? t("auth.msgEnrollmentRequired") : t("auth.msgLoginSuccess"), "success");
     router.push(session.enrollment_required ? "/auth/enroll-2fa" : "/market");
   } catch (error: any) {
-    setMessage(getErrorMessage(error, "Login failed"), "error");
+    setMessage(getErrorMessage(error, t("auth.msgLoginFailed")), "error");
   } finally {
     loading.value = false;
   }
@@ -231,11 +233,11 @@ async function onLogin() {
 
 async function beginRegistration() {
   if (!registerUsername.value.trim() || !registerEmail.value.trim() || !registerPassword.value) {
-    setMessage("Username, email, and password are required.", "warning");
+    setMessage(t("auth.msgRequiredFields"), "warning");
     return;
   }
   if (registerPassword.value !== registerPasswordConfirm.value) {
-    setMessage("Password confirmation does not match.", "warning");
+    setMessage(t("auth.msgPasswordMismatch"), "warning");
     return;
   }
   loading.value = true;
@@ -246,9 +248,9 @@ async function beginRegistration() {
       registerPassword.value
     );
     registerStep.value = "verify";
-    setMessage("Scan the QR code and enter the first 6-digit code to activate the account.", "success");
+    setMessage(t("auth.msgScanQr"), "success");
   } catch (error: any) {
-    setMessage(getErrorMessage(error, "Registration failed"), "error");
+    setMessage(getErrorMessage(error, t("auth.msgRegistrationFailed")), "error");
   } finally {
     loading.value = false;
   }
@@ -263,9 +265,9 @@ async function finishRegistration() {
     const flow = await completeRegistration(registrationDraft.value.registration_token, registerOtpCode.value.trim());
     recoveryCodes.value = flow.recovery_codes;
     registerStep.value = "done";
-    setMessage("Account activated. Save the recovery codes before continuing.", "success");
+    setMessage(t("auth.msgActivated"), "success");
   } catch (error: any) {
-    setMessage(getErrorMessage(error, "2FA verification failed"), "error");
+    setMessage(getErrorMessage(error, t("auth.msgVerify2faFailed")), "error");
   } finally {
     loading.value = false;
   }
@@ -281,9 +283,9 @@ async function startEnrollment() {
   loading.value = true;
   try {
     enrollmentDraft.value = await startTwoFactorEnrollment();
-    setMessage("QR code generated. Verify the first code to unlock the app.", "success");
+    setMessage(t("auth.msgQrGenerated"), "success");
   } catch (error: any) {
-    setMessage(getErrorMessage(error, "Failed to start 2FA enrollment"), "error");
+    setMessage(getErrorMessage(error, t("auth.msgStartEnrollmentFailed")), "error");
   } finally {
     loading.value = false;
   }
@@ -294,10 +296,10 @@ async function completeEnrollment() {
   try {
     const flow = await completeTwoFactorEnrollment(enrollmentCode.value.trim());
     enrollmentRecoveryCodes.value = flow.recovery_codes;
-    setMessage("2FA binding complete. Save the recovery codes, then continue.", "success");
+    setMessage(t("auth.msgBindingComplete"), "success");
     await loadSession(true);
   } catch (error: any) {
-    setMessage(getErrorMessage(error, "Failed to complete 2FA enrollment"), "error");
+    setMessage(getErrorMessage(error, t("auth.msgCompleteEnrollmentFailed")), "error");
   } finally {
     loading.value = false;
   }

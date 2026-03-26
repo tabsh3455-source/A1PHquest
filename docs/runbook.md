@@ -2,9 +2,10 @@
 
 ## 1) Standard Start (Linux Docker Engine / VPS)
 
-1. `cp .env.template .env`
-2. `bash deploy/stack.sh up postgres worker-supervisor api backup`
-   - `migrate` one-shot service will execute before API becomes healthy.
+1. `cd /opt/a1phquest`
+2. `bash install.sh`
+   - installer auto-generates `.env` when missing/invalid.
+   - `migrate` one-shot service executes before API becomes healthy.
 3. (Optional) force migration run:
    - `bash deploy/db_migrate.sh`
 4. Health checks:
@@ -13,8 +14,10 @@
 
 ## 2) Upgrade
 
-1. Build and rollout:
-   - `docker compose -f deploy/docker-compose.yml up --build -d api worker-supervisor`
+1. Pull latest GitHub code and rollout:
+   - `cd /opt/a1phquest`
+   - `bash deploy/update-from-github.sh`
+   - optional fast rollout: `BUILD_IMAGES=0 bash deploy/update-from-github.sh`
 2. Verify:
    - `pytest -q`
    - `HEALTH_SECONDS=30 BUILD_IMAGES=0 bash deploy/p5s_oneclick.sh`
@@ -24,7 +27,7 @@
 
 1. If previous image ids are retained, retag old ids to `deploy-api:latest` and `deploy-worker-supervisor:latest`.
 2. Recreate services without rebuild:
-   - `docker compose -f deploy/docker-compose.yml up -d --no-build api worker-supervisor`
+   - `docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-build api worker-supervisor`
 3. Re-run health and e2e checks from section 2.
 
 ## 4) Backup and Restore

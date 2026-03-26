@@ -1,11 +1,11 @@
 <template>
   <AppShell
-    title="AI Autopilot"
-    subtitle="Run model-backed regime decisions on top of the live market engine. Providers stay isolated, policies stay explicit, and every decision leaves an audit trail before execution touches runtime control."
+    :title="t('ai.title')"
+    :subtitle="t('ai.subtitle')"
   >
     <template #toolbar>
-      <router-link class="aq-auth-link ai-toolbar-link" to="/strategies">Open Strategies</router-link>
-      <el-button type="primary" :loading="loading" @click="reloadAll">Refresh</el-button>
+      <router-link class="aq-auth-link ai-toolbar-link" to="/strategies">{{ t("ai.openStrategies") }}</router-link>
+      <el-button type="primary" :loading="loading" @click="reloadAll">{{ t("ai.refresh") }}</el-button>
     </template>
 
     <WorkflowReadinessBar />
@@ -19,13 +19,13 @@
     />
     <el-alert
       v-if="!riskRuleConfigured"
-      title="Risk rule is not configured. Dry-run remains available, but live runtime actions from AI are blocked until risk setup is completed."
+      :title="t('ai.riskBlocked')"
       type="warning"
       show-icon
       class="aq-fade-up"
     />
     <div v-if="!riskRuleConfigured" class="ai-risk-cta aq-fade-up">
-      <el-button size="small" @click="goToSettings">Open Risk Settings</el-button>
+      <el-button size="small" @click="goToSettings">{{ t("ai.openRiskSettings") }}</el-button>
     </div>
 
     <section class="aq-panel aq-fade-up">
@@ -468,6 +468,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import WorkflowReadinessBar from "../components/WorkflowReadinessBar.vue";
+import { useI18n } from "../i18n";
 import {
   createAiPolicy,
   createAiProvider,
@@ -493,6 +494,7 @@ import {
 } from "../api";
 
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(false);
 const providerSaving = ref(false);
 const policySaving = ref(false);

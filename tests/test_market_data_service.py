@@ -224,6 +224,69 @@ def test_market_data_service_rolls_candles_and_pushes_closed_and_live_updates(as
     assert candle_events[3]["payload"]["candle"]["open"] == pytest.approx(99.25)
 
 
+def test_market_data_service_pushes_candle_updates_to_public_subscribers(async_runner):
+    ws_manager = _FakeWsManager()
+    service = MarketDataService(
+        ws_manager=ws_manager,
+        market_client=_FakeMarketClient(),
+        reconnect_base_seconds=1,
+        reconnect_max_seconds=15,
+        idle_timeout_seconds=25,
+        cache_size=32,
+        rest_backfill_limit=16,
+    )
+
+    public_events: list[dict] = []
+
+    async def _public_sender(payload: dict) -> None:
+        public_events.append(payload)
+
+    async_runner(service.register_public_connection(9001, _public_sender))
+    async_runner(
+        service.subscribe_public(
+            connection_id=9001,
+            exchange="binance",
+            market_type="spot",
+            symbol="BTCUSDT",
+            interval="1m",
+            is_testnet=False,
+        )
+    )
+
+    async_runner(
+        service.ingest_trade_tick(
+            TradeTick(
+                exchange="binance",
+                market_type="spot",
+                symbol="BTCUSDT",
+                price=100.0,
+                size=0.5,
+                ts_ms=1_710_000_000_000,
+                is_testnet=False,
+            )
+        )
+    )
+    async_runner(
+        service.ingest_trade_tick(
+            TradeTick(
+                exchange="binance",
+                market_type="spot",
+                symbol="BTCUSDT",
+                price=101.0,
+                size=0.3,
+                ts_ms=1_710_000_020_000,
+                is_testnet=False,
+            )
+        )
+    )
+
+    candle_events = [event for event in public_events if event.get("type") == "market_candle"]
+    assert len(candle_events) >= 2
+    assert candle_events[-1]["payload"]["symbol"] == "BTCUSDT"
+    assert candle_events[-1]["payload"]["interval"] == "1m"
+    assert candle_events[-1]["payload"]["candle"]["close"] == pytest.approx(101.0)
+
+
 def test_fetch_history_uses_warm_cache_before_rest_backfill(async_runner):
     market_client = _FakeMarketClient()
     service = MarketDataService(

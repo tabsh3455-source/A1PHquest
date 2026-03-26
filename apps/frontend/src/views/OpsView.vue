@@ -1,11 +1,11 @@
 <template>
   <AppShell
-    title="Ops Monitor"
-    subtitle="Watch runtime health, websocket footprint, audit failures, and reconciliation pressure from one operator surface. Metrics refresh automatically so you can spot drift before it becomes execution risk."
+    :title="t('ops.title')"
+    :subtitle="t('ops.subtitle')"
   >
     <template #toolbar>
-      <router-link class="aq-auth-link ops-toolbar-link" to="/settings">Runtime Settings</router-link>
-      <el-button type="primary" @click="reload" :loading="loading">Refresh</el-button>
+      <router-link class="aq-auth-link ops-toolbar-link" to="/settings">{{ t("ops.runtimeSettings") }}</router-link>
+      <el-button type="primary" @click="reload" :loading="loading">{{ t("ops.refresh") }}</el-button>
     </template>
 
     <el-alert
@@ -205,9 +205,11 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import { useI18n } from "../i18n";
 import { ensureSession, getOpsFuturesGridAudit, getOpsMetrics, type OpsFuturesGridRuntimeAudit, type OpsMetricsPayload } from "../api";
 
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(false);
 const errorMessage = ref("");
 const metrics = ref<OpsMetricsPayload | null>(null);

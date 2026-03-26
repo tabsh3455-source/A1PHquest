@@ -72,10 +72,10 @@ That second pass will generate a self-signed TLS certificate automatically when 
 
 ## Deploy Directly From GitHub
 
-Once this repository is published to GitHub, a Linux host can bootstrap from the repo in one command for public repositories:
+On a Linux host, bootstrap directly from GitHub in one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/bootstrap-from-github.sh | bash -s -- --repo https://github.com/<OWNER>/<REPO>.git
+curl -fsSL https://raw.githubusercontent.com/tabsh3455-source/A1PHquest/main/bootstrap-from-github.sh | bash -s -- --repo https://github.com/tabsh3455-source/A1PHquest.git
 ```
 
 For private repositories, configure a server-side deploy key and use a single clone-and-install command instead:
@@ -93,14 +93,37 @@ The bootstrap script will:
 
 - install `git` automatically if the host is missing it
 - clone or update the repository
-- run the existing `install.sh` for Docker install, TLS bootstrap, `.env` generation, and stack startup
+- run `install.sh` for Docker install, TLS bootstrap, `.env` generation, migration, and stack startup
+
+After first deployment, update to the latest GitHub `main` with:
+
+```bash
+cd /opt/a1phquest
+bash deploy/update-from-github.sh
+```
+
+Optional environment flags during update:
+
+- `BUILD_IMAGES=0 bash deploy/update-from-github.sh` (skip image rebuild)
+- `DEPLOY_NGINX=1 bash deploy/update-from-github.sh` (apply update and enable nginx/HTTPS)
 
 If you already manage Docker and `.env` yourself, you can still use the manual path:
 
-1. Copy `.env.template` to `.env` and fill sensitive values.
-   Runtime market-data tuning can be changed later from the web UI, so `.env` mainly stays as deployment defaults and secrets.
-2. Start stack:
-   - `docker compose -f deploy/docker-compose.yml up --build -d`
+1. Generate and validate `.env` automatically:
+   - `bash install.sh`
+2. If you want manual compose control after that, always include `.env` explicitly:
+   - `docker compose --env-file .env -f deploy/docker-compose.yml up -d --build`
+3. Or use wrapper:
+   - `bash deploy/stack.sh up postgres migrate worker-supervisor api frontend backup`
+
+### Common Deployment Errors
+
+- `POSTGRES_USER is required` / `POSTGRES_DB is required`
+  - Cause: `.env` is missing or compose was started without loading `.env`.
+  - Fix: `bash install.sh` (first-time) or use `docker compose --env-file .env ...`.
+- `workflow readiness ... 404`
+  - Cause: host is running old API code/image.
+  - Fix: `cd /opt/a1phquest && bash deploy/update-from-github.sh` then rerun smoke.
 
 ## Notes
 

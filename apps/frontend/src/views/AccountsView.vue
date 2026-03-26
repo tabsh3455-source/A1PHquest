@@ -1,11 +1,11 @@
 <template>
   <AppShell
-    title="Account Vault"
-    subtitle="Store exchange credentials behind a short-lived control token, monitor live versus testnet coverage, and keep validation or sync actions inside one secure terminal."
+    :title="t('accounts.title')"
+    :subtitle="t('accounts.subtitle')"
   >
     <template #toolbar>
-      <router-link class="aq-auth-link accounts-toolbar-link" to="/market">Open Market</router-link>
-      <el-button @click="loadAccounts" :loading="loading">Refresh</el-button>
+      <router-link class="aq-auth-link accounts-toolbar-link" to="/market">{{ t("accounts.openMarket") }}</router-link>
+      <el-button @click="loadAccounts" :loading="loading">{{ t("accounts.refresh") }}</el-button>
     </template>
 
     <el-alert
@@ -230,6 +230,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import AppShell from "../components/AppShell.vue";
+import { useI18n } from "../i18n";
 import {
   createExchangeAccount,
   ensureSession,
@@ -242,6 +243,7 @@ import {
   validateExchangeAccount
 } from "../api";
 
+const { t } = useI18n();
 const rows = ref<any[]>([]);
 const loading = ref(false);
 const creating = ref(false);

@@ -5,7 +5,7 @@
         <span class="aq-brand-mark">A1</span>
         <div>
           <div class="aq-brand-name">A1phquest</div>
-          <div class="aq-brand-subtitle">Autonomous quant terminal</div>
+          <div class="aq-brand-subtitle">{{ t("shell.brandSubtitle") }}</div>
         </div>
       </router-link>
 
@@ -19,19 +19,19 @@
       <div class="aq-sidebar-foot">
         <template v-if="session">
           <div class="aq-session-card">
-            <span class="aq-session-label">{{ session.enrollment_required ? "Limited session" : "Signed in" }}</span>
+            <span class="aq-session-label">{{ session.enrollment_required ? t("shell.sessionLimited") : t("shell.sessionSignedIn") }}</span>
             <strong>{{ session.user.username }}</strong>
             <small>{{ session.user.email }}</small>
           </div>
-          <el-button class="aq-side-button" @click="logoutAndRedirect">Logout</el-button>
+          <el-button class="aq-side-button" @click="logoutAndRedirect">{{ t("shell.logout") }}</el-button>
         </template>
         <template v-else>
           <div class="aq-session-card">
-            <span class="aq-session-label">Public mode</span>
-            <strong>Market access enabled</strong>
-            <small>Sign in to store accounts and run strategies.</small>
+            <span class="aq-session-label">{{ t("shell.publicMode") }}</span>
+            <strong>{{ t("shell.marketAccessEnabled") }}</strong>
+            <small>{{ t("shell.publicModeHint") }}</small>
           </div>
-          <router-link class="aq-auth-link" to="/auth">Sign in or register</router-link>
+          <router-link class="aq-auth-link" to="/auth">{{ t("shell.signInOrRegister") }}</router-link>
         </template>
       </div>
     </aside>
@@ -46,6 +46,13 @@
         </div>
         <div class="aq-header-tools">
           <slot name="toolbar" />
+          <el-segmented
+            v-model="localeModel"
+            class="aq-locale-switch"
+            size="small"
+            :options="localeOptions"
+            :aria-label="t('shell.language')"
+          />
         </div>
       </header>
 
@@ -64,6 +71,7 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { logout, useSessionState } from "../api";
+import { useI18n, type Locale } from "../i18n";
 
 const props = withDefaults(defineProps<{
   title?: string;
@@ -79,26 +87,33 @@ const route = useRoute();
 const router = useRouter();
 const sessionRef = useSessionState();
 const session = computed(() => sessionRef.value);
+const { locale, localeOptions, setLocale, t } = useI18n();
+const localeModel = computed<Locale>({
+  get: () => locale.value,
+  set: (value) => {
+    setLocale(value);
+  }
+});
 
 const navItems = computed(() => {
   const items = [
-    { to: "/market", label: "Market", hint: "public chart deck" }
+    { to: "/market", label: t("shell.nav.market.label"), hint: t("shell.nav.market.hint") }
   ];
   if (!session.value) {
-    items.push({ to: "/auth", label: "Auth", hint: "sign in / register" });
+    items.push({ to: "/auth", label: t("shell.nav.auth.label"), hint: t("shell.nav.auth.hint") });
     return items;
   }
   items.push(
-    { to: "/strategies", label: "Strategies", hint: "templates + versions" },
-    { to: "/accounts", label: "Accounts", hint: "exchange credentials" },
-    { to: "/ai", label: "AI", hint: "autopilot control" },
-    { to: "/settings", label: "Settings", hint: "market runtime" },
-    { to: "/ops", label: "Ops", hint: "health + metrics" }
+    { to: "/strategies", label: t("shell.nav.strategies.label"), hint: t("shell.nav.strategies.hint") },
+    { to: "/accounts", label: t("shell.nav.accounts.label"), hint: t("shell.nav.accounts.hint") },
+    { to: "/ai", label: t("shell.nav.ai.label"), hint: t("shell.nav.ai.hint") },
+    { to: "/settings", label: t("shell.nav.settings.label"), hint: t("shell.nav.settings.hint") },
+    { to: "/ops", label: t("shell.nav.ops.label"), hint: t("shell.nav.ops.hint") }
   );
   if (session.value.enrollment_required) {
     return [
-      { to: "/market", label: "Market", hint: "public chart deck" },
-      { to: "/auth/enroll-2fa", label: "Bind 2FA", hint: "required before app access" }
+      { to: "/market", label: t("shell.nav.market.label"), hint: t("shell.nav.market.hint") },
+      { to: "/auth/enroll-2fa", label: t("shell.nav.bind2fa.label"), hint: t("shell.nav.bind2fa.hint") }
     ];
   }
   return items;

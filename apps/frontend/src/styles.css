@@ -228,6 +228,10 @@ a {
   justify-content: flex-end;
 }
 
+.aq-locale-switch {
+  min-width: 146px;
+}
+
 .aq-workspace-main {
   display: grid;
   gap: 16px;

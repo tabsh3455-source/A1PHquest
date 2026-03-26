@@ -2,8 +2,8 @@
   <section class="aq-panel chart-shell">
     <div class="chart-toolbar">
       <div>
-        <h2>{{ title }}</h2>
-        <p class="aq-subtitle">{{ subtitle }}</p>
+        <h2>{{ titleLabel }}</h2>
+        <p class="aq-subtitle">{{ subtitleLabel }}</p>
       </div>
       <div class="chart-toolbar-actions">
         <el-select v-model="selectedInterval" size="small" style="width: 104px" @change="reloadChart">
@@ -17,7 +17,7 @@
       <span>{{ exchangeLabel }}</span>
       <span>{{ marketTypeLabel }}</span>
       <span>{{ displaySymbol }}</span>
-      <span v-if="lastPriceLabel">Last {{ lastPriceLabel }}</span>
+      <span v-if="lastPriceLabel">{{ t("chart.last") }} {{ lastPriceLabel }}</span>
     </div>
 
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon style="margin-top: 12px" />
@@ -25,8 +25,8 @@
     <div v-loading="loading" class="chart-surface">
       <div v-if="!isReady" class="aq-empty-state">
         <div>
-          <strong>Waiting for market scope</strong>
-          <p>{{ props.emptyMessage }}</p>
+          <strong>{{ t("chart.waiting") }}</strong>
+          <p>{{ emptyMessageLabel }}</p>
         </div>
       </div>
       <div v-else ref="chartRoot" class="chart-root" />
@@ -49,6 +49,7 @@ import {
   getPublicMarketKlines,
   type MarketKlineItem
 } from "../api";
+import { useI18n } from "../i18n";
 
 const props = withDefaults(defineProps<{
   mode?: "private" | "public";
@@ -65,12 +66,15 @@ const props = withDefaults(defineProps<{
   exchange: null,
   marketType: "spot",
   symbol: null,
-  title: "Live Candles",
-  subtitle: "Historical candles load first, then the current bar keeps streaming.",
-  emptyMessage: "Select a market scope to load candles."
+  title: "",
+  subtitle: "",
+  emptyMessage: ""
 });
 
 const intervals = ["1m", "5m", "15m", "1h"];
+const CHART_UPDATE_MAX_HZ = 5;
+const CHART_UPDATE_MIN_INTERVAL_MS = Math.max(Math.floor(1000 / CHART_UPDATE_MAX_HZ), 1);
+const { t } = useI18n();
 const selectedInterval = ref("1m");
 const chartRoot = ref<HTMLDivElement | null>(null);
 const loading = ref(false);
@@ -79,6 +83,9 @@ const connectionState = ref<"idle" | "connecting" | "live" | "reconnecting" | "s
 const lastPriceLabel = ref("");
 
 const isPublic = computed(() => props.mode === "public");
+const titleLabel = computed(() => props.title || t("chart.defaultTitle"));
+const subtitleLabel = computed(() => props.subtitle || t("chart.defaultSubtitle"));
+const emptyMessageLabel = computed(() => props.emptyMessage || t("chart.defaultEmpty"));
 const isReady = computed(() => {
   if (isPublic.value) {
     return Boolean(props.exchange && props.symbol);
@@ -90,21 +97,21 @@ const exchangeLabel = computed(() => String(props.exchange || "-").toUpperCase()
 const marketTypeLabel = computed(() => String(props.marketType || "spot").toUpperCase());
 const connectionLabel = computed(() => {
   if (connectionState.value === "live") {
-    return "WS live";
+    return t("chart.wsLive");
   }
   if (connectionState.value === "connecting") {
-    return "Connecting";
+    return t("chart.connecting");
   }
   if (connectionState.value === "reconnecting") {
-    return "Reconnecting";
+    return t("chart.reconnecting");
   }
   if (connectionState.value === "stale") {
-    return "Stream stale";
+    return t("chart.stale");
   }
   if (connectionState.value === "error") {
-    return "Socket error";
+    return t("chart.socketError");
   }
-  return "Idle";
+  return t("chart.idle");
 });
 const connectionTagType = computed(() => {
   if (connectionState.value === "live") {
@@ -126,6 +133,10 @@ let reconnectTimer: number | null = null;
 let pingTimer: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let activeSubscription: Record<string, unknown> | null = null;
+let pendingCandle: CandlestickData | null = null;
+let pendingLastPrice = "";
+let candleFlushTimer: number | null = null;
+let lastChartUpdateMs = 0;
 
 function buildWsUrl() {
   const url = new URL(API_BASE);
@@ -216,6 +227,57 @@ function clearTimers() {
   }
 }
 
+function clearCandleFlushTimer() {
+  if (candleFlushTimer !== null) {
+    window.clearTimeout(candleFlushTimer);
+    candleFlushTimer = null;
+  }
+}
+
+function resetCandleUpdateQueue() {
+  pendingCandle = null;
+  pendingLastPrice = "";
+  lastChartUpdateMs = 0;
+  clearCandleFlushTimer();
+}
+
+function flushPendingCandleUpdate() {
+  clearCandleFlushTimer();
+  if (!pendingCandle || !series) {
+    return;
+  }
+  series.update(pendingCandle);
+  if (pendingLastPrice) {
+    lastPriceLabel.value = pendingLastPrice;
+  }
+  pendingCandle = null;
+  pendingLastPrice = "";
+  lastChartUpdateMs = Date.now();
+}
+
+function schedulePendingCandleFlush() {
+  if (candleFlushTimer !== null) {
+    return;
+  }
+  const elapsed = Date.now() - lastChartUpdateMs;
+  const delay = Math.max(CHART_UPDATE_MIN_INTERVAL_MS - elapsed, 0);
+  candleFlushTimer = window.setTimeout(() => {
+    candleFlushTimer = null;
+    flushPendingCandleUpdate();
+  }, delay);
+}
+
+function queueCandleUpdate(next: CandlestickData) {
+  pendingCandle = next;
+  pendingLastPrice = Number(next.close).toFixed(4);
+  const elapsed = Date.now() - lastChartUpdateMs;
+  if (!lastChartUpdateMs || elapsed >= CHART_UPDATE_MIN_INTERVAL_MS) {
+    flushPendingCandleUpdate();
+    return;
+  }
+  schedulePendingCandleFlush();
+}
+
 function sendSocketMessage(payload: Record<string, unknown>) {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(payload));
@@ -249,6 +311,7 @@ function subscribeCurrentStream() {
 
 function closeSocket() {
   clearTimers();
+  resetCandleUpdateQueue();
   if (!socket) {
     return;
   }
@@ -285,7 +348,7 @@ function handleSocketMessage(rawMessage: string) {
     return;
   }
   if (payload.type === "market_subscription_error") {
-    errorMessage.value = String(payload.message || "Failed to subscribe to market candles.");
+    errorMessage.value = String(payload.message || t("chart.subscribeError"));
     connectionState.value = "error";
     return;
   }
@@ -300,7 +363,7 @@ function handleSocketMessage(rawMessage: string) {
     }
     connectionState.value = String(statusPayload.status || "connecting") as typeof connectionState.value;
     errorMessage.value = connectionState.value === "error"
-      ? String(statusPayload.message || "Market stream error.")
+      ? String(statusPayload.message || t("chart.streamError"))
       : "";
     return;
   }
@@ -315,14 +378,13 @@ function handleSocketMessage(rawMessage: string) {
   if (!candle || typeof candle !== "object") {
     return;
   }
-  series.update({
+  queueCandleUpdate({
     time: Number(candle.time) as UTCTimestamp,
     open: Number(candle.open),
     high: Number(candle.high),
     low: Number(candle.low),
     close: Number(candle.close)
   });
-  lastPriceLabel.value = Number(candle.close).toFixed(4);
   if (connectionState.value !== "error") {
     connectionState.value = "live";
   }
@@ -365,8 +427,9 @@ function openSocket() {
 
 async function reloadChart() {
   if (!isReady.value) {
-    errorMessage.value = props.emptyMessage;
+    errorMessage.value = emptyMessageLabel.value;
     lastPriceLabel.value = "";
+    resetCandleUpdateQueue();
     activeSubscription = null;
     connectionState.value = "idle";
     series?.setData([]);
@@ -375,6 +438,7 @@ async function reloadChart() {
   }
 
   ensureChart();
+  resetCandleUpdateQueue();
   errorMessage.value = "";
   loading.value = true;
   try {
@@ -400,7 +464,7 @@ async function reloadChart() {
     await nextTick();
     openSocket();
   } catch (error: any) {
-    errorMessage.value = error?.response?.data?.detail || "Failed to load market candles.";
+    errorMessage.value = error?.response?.data?.detail || t("chart.loadError");
   } finally {
     loading.value = false;
   }
@@ -420,6 +484,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   closeSocket();
+  resetCandleUpdateQueue();
   resizeObserver?.disconnect();
   resizeObserver = null;
   chart?.remove();

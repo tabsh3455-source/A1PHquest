@@ -1,11 +1,11 @@
 <template>
   <AppShell
-    title="Strategy Library"
-    subtitle="Browse template families, build strategy drafts or live-ready versions, keep old revisions, and switch runtime from the same workspace."
+    :title="t('strategies.title')"
+    :subtitle="t('strategies.subtitle')"
   >
     <template #toolbar>
-      <el-button @click="loadData" :loading="loading">Refresh</el-button>
-      <router-link class="aq-auth-link" to="/market">Open Market</router-link>
+      <el-button @click="loadData" :loading="loading">{{ t("strategies.refresh") }}</el-button>
+      <router-link class="aq-auth-link" to="/market">{{ t("strategies.openMarket") }}</router-link>
     </template>
 
     <WorkflowReadinessBar />
@@ -16,9 +16,9 @@
       :exchange="chartExchange"
       :market-type="chartMarketType"
       :symbol="chartSymbol"
-      title="Strategy Context Chart"
-      subtitle="Use the selected instance or the editor context to preview market structure before saving or switching versions."
-      empty-message="Pick a template and symbol to preview the market."
+      :title="t('strategies.chartTitle')"
+      :subtitle="t('strategies.chartSubtitle')"
+      :empty-message="t('strategies.chartEmpty')"
     />
 
     <div class="aq-grid aq-grid-2 strategy-stage">
@@ -364,6 +364,7 @@ import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import StrategyCandleChart from "../components/StrategyCandleChart.vue";
 import WorkflowReadinessBar from "../components/WorkflowReadinessBar.vue";
+import { useI18n } from "../i18n";
 import {
   createStrategy,
   ensureSession,
@@ -386,6 +387,7 @@ import {
 
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 
 const rows = ref<StrategyItem[]>([]);
 const accounts = ref<ExchangeAccountItem[]>([]);

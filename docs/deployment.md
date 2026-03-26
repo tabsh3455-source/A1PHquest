@@ -6,31 +6,54 @@
 - Linux VM recommended (Ubuntu 22.04+)
 - Recommended target: cloud VPS (Linux Docker Engine).
 
-## Steps
+## First Deploy (Recommended)
 
-1. Copy environment:
-   - `cp .env.template .env`
-2. Update secrets:
-   - `JWT_SECRET`
-   - `KMS_MODE=local_aes`
-   - `AES_MASTER_KEY` (32-byte recommended)
-   - Optional gateway endpoints:
-     - `BINANCE_SPOT_BASE_URL`
-     - `BINANCE_TESTNET_BASE_URL`
-     - `OKX_BASE_URL`
-3. Start services:
-   - `bash deploy/stack.sh up postgres worker-supervisor api`
-   - Compose will run one-shot `migrate` service before API health.
-   - API keeps optional startup migration path (`MIGRATIONS_RUN_ON_STARTUP=1`) for standalone mode.
+1. Clone repository to Linux host:
+   - `git clone --branch main https://github.com/tabsh3455-source/A1PHquest.git /opt/a1phquest`
+2. Run one-command installer:
+   - `cd /opt/a1phquest`
+   - `bash install.sh`
+3. Installer behavior:
+   - installs Docker/Compose when missing
+   - auto-generates secure `.env` when missing or invalid
+   - runs `migrate` one-shot before `api`
+   - starts `postgres`, `worker-supervisor`, `api`, `frontend`, `backup` (and optional `nginx`)
 4. Validate health:
    - `curl http://localhost:8000/healthz`
    - `curl http://localhost:8010/healthz`
 5. Optional manual migration:
    - `bash deploy/db_migrate.sh`
-5. Trigger exchange sync (after binding account):
+6. Trigger exchange sync (after binding account):
    - `POST /api/exchange-accounts/{id}/sync`
    - High-risk routes require step-up token header:
      - `POST /api/auth/2fa/step-up` then set `X-StepUp-Token: <token>`
+
+## GitHub One-Command Bootstrap
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tabsh3455-source/A1PHquest/main/bootstrap-from-github.sh | bash -s -- --repo https://github.com/tabsh3455-source/A1PHquest.git
+```
+
+## Upgrade Existing Deployment
+
+```bash
+cd /opt/a1phquest
+bash deploy/update-from-github.sh
+```
+
+Optional flags:
+
+- `BUILD_IMAGES=0 bash deploy/update-from-github.sh`
+- `DEPLOY_NGINX=1 bash deploy/update-from-github.sh`
+
+## Manual Compose Mode (Advanced)
+
+Use this only after `.env` exists:
+
+- `docker compose --env-file .env -f deploy/docker-compose.yml up -d --build`
+- or wrapper: `bash deploy/stack.sh up postgres migrate worker-supervisor api frontend backup`
+
+Without `--env-file .env`, compose variable interpolation can fail on required DB variables.
 
 ## Service Readiness
 
@@ -43,6 +66,15 @@
   - `MIGRATION_PG_ADVISORY_LOCK_TIMEOUT_SECONDS`
 - Runtime consistency check API:
   - `GET /api/strategies/{id}/runtime/consistency`
+
+## Common Failures
+
+- `required variable POSTGRES_USER/POSTGRES_DB is missing`
+  - Root cause: `.env` missing or not loaded by compose.
+  - Fix: run `bash install.sh`, or add `--env-file .env` to compose command.
+- `/api/workflow/readiness` returns `404`
+  - Root cause: stale API image/code.
+  - Fix: run `bash deploy/update-from-github.sh`, then rerun smoke tests.
 
 ## One-Click P5-S Verification
 

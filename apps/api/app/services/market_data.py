@@ -1249,11 +1249,15 @@ class MarketDataService:
         emitted: list[tuple[MarketStreamKey, CandleCacheEntry, list[int], list[int]]] = []
 
         async with self._lock:
-            has_subscribers = any(
+            has_private_subscribers = any(
                 key.symbol_key == tick.symbol_key and subscribers
                 for key, subscribers in self._stream_subscribers.items()
             )
-            if not has_subscribers:
+            has_public_subscribers = any(
+                key.symbol_key == tick.symbol_key and subscribers
+                for key, subscribers in self._public_stream_subscribers.items()
+            )
+            if not has_private_subscribers and not has_public_subscribers:
                 return
 
             for interval in LIVE_MARKET_INTERVALS:

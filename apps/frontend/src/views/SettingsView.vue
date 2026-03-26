@@ -1,11 +1,11 @@
 <template>
   <AppShell
-    title="Runtime Settings"
-    subtitle="Tune low-latency market data behavior from the terminal itself. Database overrides hot-apply without editing deploy files, while reset returns the stack to its install-time defaults."
+    :title="t('settings.title')"
+    :subtitle="t('settings.subtitle')"
   >
     <template #toolbar>
-      <router-link class="aq-auth-link settings-toolbar-link" to="/ops">Open Ops</router-link>
-      <el-button type="primary" @click="reload" :loading="loading">Refresh</el-button>
+      <router-link class="aq-auth-link settings-toolbar-link" to="/ops">{{ t("settings.openOps") }}</router-link>
+      <el-button type="primary" @click="reload" :loading="loading">{{ t("settings.refresh") }}</el-button>
     </template>
 
     <el-alert
@@ -329,6 +329,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import AppShell from "../components/AppShell.vue";
+import { useI18n } from "../i18n";
 import {
   ensureSession,
   getRiskRule,
@@ -343,6 +344,7 @@ import {
   type RiskRulePayload
 } from "../api";
 
+const { t } = useI18n();
 type EditableMarketDataSettings = Omit<
   MarketDataSettings,
   "has_overrides" | "updated_at" | "updated_by_user_id" | "default_values"

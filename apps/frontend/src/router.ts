@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { loadSession } from "./api";
+import { LOCALE_CHANGE_EVENT, tGlobal } from "./i18n";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -7,18 +8,18 @@ const router = createRouter({
     { path: "/", redirect: "/market" },
     { path: "/login", redirect: "/auth" },
     { path: "/dashboard", redirect: "/market" },
-    { path: "/market", component: () => import("./views/MarketView.vue"), meta: { title: "Market", public: true } },
-    { path: "/auth", component: () => import("./views/LoginView.vue"), meta: { title: "Auth", public: true } },
+    { path: "/market", component: () => import("./views/MarketView.vue"), meta: { titleKey: "route.market", public: true } },
+    { path: "/auth", component: () => import("./views/LoginView.vue"), meta: { titleKey: "route.auth", public: true } },
     {
       path: "/auth/enroll-2fa",
       component: () => import("./views/LoginView.vue"),
-      meta: { title: "Enroll 2FA", public: true, enrollmentOnly: true }
+      meta: { titleKey: "route.enroll2fa", public: true, enrollmentOnly: true }
     },
-    { path: "/accounts", component: () => import("./views/AccountsView.vue"), meta: { title: "Accounts" } },
-    { path: "/strategies", component: () => import("./views/StrategiesView.vue"), meta: { title: "Strategies" } },
-    { path: "/ai", component: () => import("./views/AiView.vue"), meta: { title: "AI Autopilot" } },
-    { path: "/ops", component: () => import("./views/OpsView.vue"), meta: { title: "Ops" } },
-    { path: "/settings", component: () => import("./views/SettingsView.vue"), meta: { title: "Settings" } }
+    { path: "/accounts", component: () => import("./views/AccountsView.vue"), meta: { titleKey: "route.accounts" } },
+    { path: "/strategies", component: () => import("./views/StrategiesView.vue"), meta: { titleKey: "route.strategies" } },
+    { path: "/ai", component: () => import("./views/AiView.vue"), meta: { titleKey: "route.ai" } },
+    { path: "/ops", component: () => import("./views/OpsView.vue"), meta: { titleKey: "route.ops" } },
+    { path: "/settings", component: () => import("./views/SettingsView.vue"), meta: { titleKey: "route.settings" } }
   ]
 });
 
@@ -49,8 +50,16 @@ router.beforeEach(async (to) => {
 });
 
 router.afterEach((to) => {
-  const pageTitle = String(to.meta?.title || "Market");
+  const pageTitle = tGlobal(String(to.meta?.titleKey || "route.market"));
   document.title = `${pageTitle} | A1phquest`;
 });
+
+if (typeof window !== "undefined") {
+  window.addEventListener(LOCALE_CHANGE_EVENT, () => {
+    const current = router.currentRoute.value;
+    const pageTitle = tGlobal(String(current.meta?.titleKey || "route.market"));
+    document.title = `${pageTitle} | A1phquest`;
+  });
+}
 
 export default router;

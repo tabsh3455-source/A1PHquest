@@ -1,37 +1,37 @@
 <template>
   <AppShell
-    title="Market Terminal"
-    subtitle="Public real-time market deck with low-latency candles, product switching, and direct strategy launch points."
+    :title="t('market.title')"
+    :subtitle="t('market.subtitle')"
     :public-mode="!session"
   >
     <template #toolbar>
       <span class="aq-chip">{{ exchange.toUpperCase() }} / {{ marketType.toUpperCase() }}</span>
-      <span class="aq-chip">{{ symbol || "Loading symbol..." }}</span>
-      <router-link v-if="!session" class="aq-auth-link market-auth-link" to="/auth">Sign in to trade</router-link>
+      <span class="aq-chip">{{ symbol || t("market.loadingSymbol") }}</span>
+      <router-link v-if="!session" class="aq-auth-link market-auth-link" to="/auth">{{ t("market.signInToTrade") }}</router-link>
     </template>
 
     <WorkflowReadinessBar />
 
     <section class="market-hero aq-panel aq-fade-up">
       <div class="market-hero-copy">
-        <span class="market-kicker">Public Market Workspace</span>
+        <span class="market-kicker">{{ t("market.kicker") }}</span>
         <h2>{{ symbol }}</h2>
         <p>
-          Watch public candles before you wire any exchange account. Once you sign in, use the same market context to seed strategy drafts and live-ready grid, DCA, or Combo versions.
+          {{ t("market.description") }}
         </p>
       </div>
       <div class="market-hero-metrics">
         <div class="aq-soft-block">
-          <span class="aq-kv-label">Exchange</span>
+          <span class="aq-kv-label">{{ t("market.exchange") }}</span>
           <strong>{{ exchange.toUpperCase() }}</strong>
         </div>
         <div class="aq-soft-block">
-          <span class="aq-kv-label">Market</span>
+          <span class="aq-kv-label">{{ t("market.market") }}</span>
           <strong>{{ marketType.toUpperCase() }}</strong>
         </div>
         <div class="aq-soft-block">
-          <span class="aq-kv-label">Default Mode</span>
-          <strong>Public feed</strong>
+          <span class="aq-kv-label">{{ t("market.defaultMode") }}</span>
+          <strong>{{ t("market.publicFeed") }}</strong>
         </div>
       </div>
     </section>
@@ -41,22 +41,22 @@
       :exchange="exchange"
       :market-type="marketType"
       :symbol="symbol"
-      title="Public Candle Feed"
-      subtitle="Historical backfill and live websocket updates run without requiring a saved strategy."
-      empty-message="Pick an exchange and symbol to start streaming candles."
+      :title="t('market.chartTitle')"
+      :subtitle="t('market.chartSubtitle')"
+      :empty-message="t('market.chartEmpty')"
     />
 
     <section class="aq-panel aq-fade-up">
       <div class="aq-title-row">
         <div>
-          <h2>Template Launchpad</h2>
-          <p class="aq-subtitle">Turn the current market into a prefilled live-supported strategy: spot grid, DCA, combo, or futures grid.</p>
+          <h2>{{ t("market.launchpadTitle") }}</h2>
+          <p class="aq-subtitle">{{ t("market.launchpadSubtitle") }}</p>
         </div>
       </div>
 
       <div class="aq-grid aq-grid-3" style="margin-top: 14px">
         <button v-for="item in featuredTemplates" :key="item.template_key" class="template-launch-card" type="button" @click="openTemplate(item.template_key)">
-          <span class="template-launch-state" :class="item.execution_status">{{ item.execution_status === "live_supported" ? "Live" : "Draft" }}</span>
+          <span class="template-launch-state" :class="item.execution_status">{{ item.execution_status === "live_supported" ? t("common.live") : t("common.draft") }}</span>
           <strong>{{ item.display_name }}</strong>
           <small>{{ item.description }}</small>
         </button>
@@ -66,17 +66,17 @@
     <template #inspector>
       <section class="aq-soft-block aq-stack">
         <div>
-          <h3>Market Scope</h3>
-          <p class="aq-form-note">Switch exchange, product type, and symbol before jumping into strategy creation.</p>
+          <h3>{{ t("market.scopeTitle") }}</h3>
+          <p class="aq-form-note">{{ t("market.scopeSubtitle") }}</p>
         </div>
         <el-form label-position="top">
-          <el-form-item label="Exchange">
+          <el-form-item :label="t('market.labelExchange')">
             <el-segmented v-model="exchange" :options="exchangeOptions" @change="loadSymbols" />
           </el-form-item>
-          <el-form-item label="Market Type">
+          <el-form-item :label="t('market.labelMarketType')">
             <el-segmented v-model="marketType" :options="marketTypeOptions" @change="loadSymbols" />
           </el-form-item>
-          <el-form-item label="Symbol">
+          <el-form-item :label="t('market.labelSymbol')">
             <el-select v-model="symbol" filterable style="width: 100%" @visible-change="loadSymbols">
               <el-option v-for="item in symbols" :key="item.symbol" :label="item.label" :value="item.symbol" />
             </el-select>
@@ -86,27 +86,29 @@
 
       <section class="aq-soft-block aq-stack">
         <div>
-          <h3>From This Market</h3>
-          <p class="aq-form-note">Jump into a prefilled template using the currently selected symbol.</p>
+          <h3>{{ t("market.fromMarketTitle") }}</h3>
+          <p class="aq-form-note">{{ t("market.fromMarketSubtitle") }}</p>
         </div>
-        <el-button type="primary" @click="openTemplate('spot_grid')">Create Spot Grid</el-button>
-        <el-button @click="openTemplate('dca')">Create DCA</el-button>
-        <el-button @click="openTemplate('combo_grid_dca')">Create Combo Grid + DCA</el-button>
-        <el-button @click="openTemplate('futures_grid')">Create Futures Grid</el-button>
+        <el-button type="primary" @click="openTemplate('spot_grid')">{{ t("market.createSpotGrid") }}</el-button>
+        <el-button @click="openTemplate('dca')">{{ t("market.createDca") }}</el-button>
+        <el-button @click="openTemplate('combo_grid_dca')">{{ t("market.createCombo") }}</el-button>
+        <el-button @click="openTemplate('futures_grid')">{{ t("market.createFuturesGrid") }}</el-button>
       </section>
     </template>
   </AppShell>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import StrategyCandleChart from "../components/StrategyCandleChart.vue";
 import WorkflowReadinessBar from "../components/WorkflowReadinessBar.vue";
 import { listPublicMarketSymbols, listStrategyTemplates, useSessionState, type StrategyTemplateItem, type PublicMarketSymbolItem } from "../api";
+import { useI18n } from "../i18n";
 
 const router = useRouter();
+const { t } = useI18n();
 const sessionRef = useSessionState();
 const session = sessionRef;
 
@@ -117,14 +119,14 @@ const symbols = ref<PublicMarketSymbolItem[]>([]);
 const featuredTemplates = ref<StrategyTemplateItem[]>([]);
 const launchTemplateOrder = ["spot_grid", "dca", "combo_grid_dca", "futures_grid"];
 
-const exchangeOptions = [
+const exchangeOptions = computed(() => [
   { label: "Binance", value: "binance" },
   { label: "OKX", value: "okx" }
-] as const;
-const marketTypeOptions = [
-  { label: "Spot", value: "spot" },
-  { label: "Perp", value: "perp" }
-] as const;
+]);
+const marketTypeOptions = computed(() => [
+  { label: t("common.spot"), value: "spot" },
+  { label: t("common.perp"), value: "perp" }
+]);
 
 async function loadSymbols() {
   const response = await listPublicMarketSymbols(exchange.value, marketType.value);
