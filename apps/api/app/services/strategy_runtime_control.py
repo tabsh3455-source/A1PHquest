@@ -114,7 +114,7 @@ def _validate_live_runtime_strategy(
     db: Session,
     user_id: int,
 ) -> None:
-    if strategy.strategy_type not in {"grid", "dca"}:
+    if strategy.strategy_type not in {"grid", "dca", "combo_grid_dca"}:
         raise StrategyRuntimeControlError(
             f"strategy_type '{strategy.strategy_type}' is not enabled for live runtime"
         )

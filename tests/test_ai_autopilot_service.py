@@ -421,3 +421,75 @@ def test_ai_autopilot_blocks_disabled_action_from_policy(async_runner, monkeypat
     assert decision.status == "blocked"
     execution_result = json.loads(decision.execution_result_json)
     assert "disabled by policy configuration" in execution_result["blocked_reason"]
+
+
+def test_ai_autopilot_dry_run_create_strategy_version_supports_combo_grid_dca(async_runner, monkeypatch):
+    session_factory = _build_sessionmaker()
+    with session_factory() as db:
+        user, _, account, _, _, policy = _seed_policy_graph(db)
+        combo_strategy = Strategy(
+            user_id=user.id,
+            name="combo-gamma",
+            template_key="combo_grid_dca",
+            strategy_type="combo_grid_dca",
+            config_json=json.dumps(
+                {
+                    "exchange_account_id": account.id,
+                    "symbol": "BTCUSDT",
+                    "grid_count": 10,
+                    "grid_step_pct": 0.45,
+                    "base_order_size": 0.001,
+                    "max_grid_levels": 12,
+                    "cycle_seconds": 600,
+                    "amount_per_cycle": 20,
+                    "price_offset_pct": 0.15,
+                    "min_order_volume": 0.0002,
+                }
+            ),
+            status="stopped",
+        )
+        db.add(combo_strategy)
+        db.commit()
+        db.refresh(combo_strategy)
+        policy.strategy_ids_json = json.dumps([combo_strategy.id])
+        db.add(policy)
+        db.commit()
+        policy_id = policy.id
+        combo_strategy_id = combo_strategy.id
+
+    service = AiAutopilotService(
+        market_data_service=_FakeMarketDataService(),
+        ws_manager=_FakeWsManager(),
+    )
+    monkeypatch.setattr("app.services.ai_autopilot.SessionLocal", session_factory)
+    service._runtime_control = _FakeRuntimeControl()
+
+    async def _fake_call_provider(*, provider, policy, context):
+        return {"provider": "fake"}, {
+            "action": "create_strategy_version",
+            "target_strategy_id": combo_strategy_id,
+            "confidence": 0.89,
+            "rationale": "Tighten both the grid cap and DCA cadence during a choppy regime",
+            "parameter_overrides": {
+                "max_grid_levels": 16,
+                "cycle_seconds": 300,
+                "price_offset_pct": 0.25,
+            },
+        }
+
+    monkeypatch.setattr(service, "_call_provider", _fake_call_provider)
+
+    decision = async_runner(
+        service.run_policy_once(
+            policy_id=policy_id,
+            trigger_source="manual",
+            dry_run_override=True,
+        )
+    )
+
+    assert decision.status == "dry_run"
+    execution_result = json.loads(decision.execution_result_json)
+    changed_fields = execution_result["proposed_strategy"]["changed_fields"]
+    assert changed_fields["max_grid_levels"] == 16
+    assert changed_fields["cycle_seconds"] == 300
+    assert changed_fields["price_offset_pct"] == 0.25

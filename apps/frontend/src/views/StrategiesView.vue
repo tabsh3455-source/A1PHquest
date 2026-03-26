@@ -135,7 +135,7 @@
         <div class="aq-title-row">
           <div>
             <h3>Composer</h3>
-            <p class="aq-form-note">Template-driven editing replaces the old hardcoded grid/DCA form.</p>
+            <p class="aq-form-note">Template-driven editing replaces the old hardcoded grid/DCA-only form.</p>
           </div>
           <el-tag :type="editingStrategyId ? 'warning' : 'success'">
             {{ editingStrategyId ? `Editing #${editingStrategyId}` : "New Instance" }}

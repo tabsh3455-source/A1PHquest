@@ -15,7 +15,7 @@
         <span class="market-kicker">Public Market Workspace</span>
         <h2>{{ symbol }}</h2>
         <p>
-          Watch public candles before you wire any exchange account. Once you sign in, use the same market context to seed strategy drafts and live-ready grid or DCA versions.
+          Watch public candles before you wire any exchange account. Once you sign in, use the same market context to seed strategy drafts and live-ready grid, DCA, or Combo versions.
         </p>
       </div>
       <div class="market-hero-metrics">

@@ -300,7 +300,7 @@
               multiple
               collapse-tags
               collapse-tags-tooltip
-              placeholder="Choose grid or DCA versions"
+              placeholder="Choose grid, DCA, or Combo versions"
               style="width: 100%"
             >
               <el-option
