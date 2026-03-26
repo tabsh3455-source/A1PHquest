@@ -12,7 +12,7 @@ A1phquest is a monorepo implementation based on the VeighNa(vn.py) ecosystem for
   - Multi-tenant data model (`user_id` enforced in core tables)
   - Exchange account storage with local AES master-key encryption
   - Strategy lifecycle endpoints
-  - Risk rule endpoints
+  - Risk rule endpoints (fail-closed gate for live runtime)
   - Tenant-scoped WebSocket endpoint
   - Audit trail recording
 - Worker supervisor service skeleton for per-user process lifecycle
@@ -113,12 +113,14 @@ If you already manage Docker and `.env` yourself, you can still use the manual p
 - Ops metrics endpoint is available at `GET /api/ops/metrics`.
 - Market data runtime settings endpoint is available at `GET/PUT/DELETE /api/system-config/market-data`.
 - Frontend settings page lets you tune low-latency market data behavior interactively without hand-editing `.env`.
+- Frontend settings page also includes risk guardrail configuration; live starts stay blocked until a risk rule is saved.
 - Lighter reconcile backlog endpoint is available at `GET /api/exchange-accounts/{id}/lighter-reconcile/pending`.
 - Lighter reconcile backlog response includes retry window stats/hints (`retry_due_count`, `retry_blocked_count`, `next_retry_at`).
 - Lighter reconcile sync errors apply cooldown backoff before next error-count increment.
 - Daily-loss risk checks are computed from persisted trade fills on the server side (realized PnL).
+- Live order submit and live strategy start are fail-closed when no risk rule exists.
 - Lighter trade sync includes best-effort pagination (`next_cursor` or has-more fallback) with duplicate-page protection.
-- Worker runtime strategies (`grid/dca`) now use concrete CTA order hooks instead of no-op callbacks.
+- Worker runtime strategies (`grid/futures_grid/dca/combo_grid_dca`) now use concrete CTA order hooks instead of no-op callbacks.
 - API startup now applies Alembic migrations to `head` automatically.
 - PostgreSQL migration lock (`pg_advisory_lock`) is used to avoid concurrent upgrade races.
 - Worker runtime detects heartbeat timeout and marks runtime failed with process cleanup.

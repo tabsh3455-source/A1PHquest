@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-import json
-import os
-from random import randint
 import base64
 import hashlib
 import hmac
+import json
+import os
+from random import randint
 import struct
 import time
 
@@ -33,13 +33,35 @@ def generate_totp(secret: str, *, period: int = 30, digits: int = 6) -> str:
     return str(binary % (10**digits)).zfill(digits)
 
 
-def post_json(path: str, payload: dict, csrf_token: str | None = None) -> tuple[int, dict]:
+def request_json(
+    method: str,
+    path: str,
+    payload: dict | None = None,
+    *,
+    csrf_token: str | None = None,
+    step_up_token: str | None = None,
+) -> tuple[int, dict]:
     url = f"{BASE_URL}{path}"
-    headers = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {"Content-Type": "application/json"}
     if csrf_token:
         headers["X-CSRF-Token"] = csrf_token
-    response = SESSION.post(url, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
-    data = response.json() if response.content else {}
+    if step_up_token:
+        headers["X-StepUp-Token"] = step_up_token
+    response = SESSION.request(
+        method=method.upper(),
+        url=url,
+        json=payload,
+        headers=headers,
+        timeout=20,
+        verify=VERIFY_SSL,
+    )
+    if not response.content:
+        data = {}
+    else:
+        try:
+            data = response.json()
+        except ValueError:
+            data = {"raw": response.text[:500]}
     return response.status_code, data
 
 
@@ -49,37 +71,143 @@ def main() -> None:
     email = f"{username}@example.com"
     password = "StrongPass123!"
 
-    register_status, register_data = post_json(
-        "/api/auth/register",
+    register_start_status, register_start_data = request_json(
+        "POST",
+        "/api/auth/register/start",
         {"username": username, "email": email, "password": password},
     )
-    assert register_status == 201, f"register failed: {register_status}, {register_data}"
+    assert register_start_status == 201, f"register start failed: {register_start_status}, {register_start_data}"
 
-    login_status, login_data = post_json("/api/auth/login", {"username": username, "password": password})
-    assert login_status == 200, f"initial login failed: {login_status}, {login_data}"
-    csrf_token = login_data["csrf_token"]
+    otp_secret = str(register_start_data["otp_secret"])
+    registration_token = str(register_start_data["registration_token"])
+    register_complete_status, register_complete_data = request_json(
+        "POST",
+        "/api/auth/register/complete",
+        {
+            "registration_token": registration_token,
+            "otp_code": generate_totp(otp_secret),
+        },
+    )
+    assert register_complete_status == 201, (
+        f"register complete failed: {register_complete_status}, {register_complete_data}"
+    )
+    csrf_token = str(register_complete_data["csrf_token"])
 
-    setup_status, setup_data = post_json("/api/auth/2fa/setup", {}, csrf_token=csrf_token)
-    assert setup_status == 200, f"2fa setup failed: {setup_status}, {setup_data}"
-    secret = setup_data["otp_secret"]
-
-    no_otp_status, no_otp_login_data = post_json(
+    no_otp_status, no_otp_login_data = request_json(
+        "POST",
         "/api/auth/login",
         {"username": username, "password": password},
+        csrf_token=csrf_token,
     )
     assert no_otp_status == 400, f"login without otp should fail: {no_otp_status}, {no_otp_login_data}"
 
-    otp_code = generate_totp(secret)
-    final_login_status, final_login_data = post_json(
+    final_login_status, final_login_data = request_json(
+        "POST",
         "/api/auth/login",
-        {"username": username, "password": password, "otp_code": otp_code},
+        {"username": username, "password": password, "otp_code": generate_totp(otp_secret)},
+        csrf_token=csrf_token,
     )
     assert final_login_status == 200, f"login with otp failed: {final_login_status}, {final_login_data}"
+    csrf_token = str(final_login_data["csrf_token"])
+
+    step_up_status, step_up_data = request_json(
+        "POST",
+        "/api/auth/2fa/step-up",
+        {"code": generate_totp(otp_secret)},
+        csrf_token=csrf_token,
+    )
+    assert step_up_status == 200, f"step-up failed: {step_up_status}, {step_up_data}"
+    step_up_token = str(step_up_data["step_up_token"])
+
+    risk_status, risk_data = request_json(
+        "PUT",
+        "/api/risk-rules",
+        {
+            "max_order_notional": 5000,
+            "max_daily_loss": 1000,
+            "max_position_ratio": 0.5,
+            "max_cancel_rate_per_minute": 60,
+            "circuit_breaker_enabled": True,
+        },
+        csrf_token=csrf_token,
+        step_up_token=step_up_token,
+    )
+    assert risk_status == 200, f"risk rule upsert failed: {risk_status}, {risk_data}"
+
+    account_status, account_data = request_json(
+        "POST",
+        "/api/exchange-accounts",
+        {
+            "exchange": "binance",
+            "account_alias": "smoke-binance",
+            "api_key": "smoke-key",
+            "api_secret": "smoke-secret",
+            "is_testnet": True,
+        },
+        csrf_token=csrf_token,
+        step_up_token=step_up_token,
+    )
+    assert account_status == 201, f"exchange account create failed: {account_status}, {account_data}"
+    exchange_account_id = int(account_data["id"])
+
+    create_strategy_status, create_strategy_data = request_json(
+        "POST",
+        "/api/strategies",
+        {
+            "name": "smoke-futures-grid",
+            "template_key": "futures_grid",
+            "config": {
+                "exchange_account_id": exchange_account_id,
+                "symbol": "BTCUSDT",
+                "grid_count": 8,
+                "grid_step_pct": 0.5,
+                "base_order_size": 0.001,
+                "leverage": 3,
+                "direction": "neutral",
+            },
+        },
+        csrf_token=csrf_token,
+    )
+    assert create_strategy_status in {200, 201}, (
+        f"strategy create failed: {create_strategy_status}, {create_strategy_data}"
+    )
+    strategy_id = int(create_strategy_data["id"])
+
+    # Refresh step-up token before high-risk runtime start in case the first token is near expiry.
+    step_up_refresh_status, step_up_refresh_data = request_json(
+        "POST",
+        "/api/auth/2fa/step-up",
+        {"code": generate_totp(otp_secret)},
+        csrf_token=csrf_token,
+    )
+    assert step_up_refresh_status == 200, (
+        f"step-up refresh failed: {step_up_refresh_status}, {step_up_refresh_data}"
+    )
+    step_up_token = str(step_up_refresh_data["step_up_token"])
+
+    start_strategy_status, start_strategy_data = request_json(
+        "POST",
+        f"/api/strategies/{strategy_id}/start",
+        {},
+        csrf_token=csrf_token,
+        step_up_token=step_up_token,
+    )
+    assert start_strategy_status == 200, (
+        f"futures grid start failed: {start_strategy_status}, {start_strategy_data}"
+    )
+    assert str(start_strategy_data.get("runtime_ref") or "").strip(), "runtime_ref should be non-empty"
+    assert str(start_strategy_data.get("status") or "") in {"starting", "running", "failed"}
 
     result = {
-        "register_status": register_status,
+        "register_start_status": register_start_status,
+        "register_complete_status": register_complete_status,
         "login_without_otp_status": no_otp_status,
         "login_with_otp_status": final_login_status,
+        "risk_rule_status": risk_status,
+        "exchange_account_status": account_status,
+        "create_strategy_status": create_strategy_status,
+        "start_strategy_status": start_strategy_status,
+        "start_strategy_runtime_status": start_strategy_data.get("status"),
         "username": username,
     }
     print(json.dumps(result, ensure_ascii=False))

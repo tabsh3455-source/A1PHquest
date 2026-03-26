@@ -28,7 +28,7 @@ from ..models import (
     PositionSnapshot,
     Strategy,
 )
-from ..schemas import ComboGridDcaStrategyConfig, DcaStrategyConfig, GridStrategyConfig
+from ..schemas import ComboGridDcaStrategyConfig, DcaStrategyConfig, FuturesGridStrategyConfig, GridStrategyConfig
 from ..services.market_data import MarketDataService, normalize_market_symbol
 from ..services.strategy_runtime_control import StrategyRuntimeControlError, StrategyRuntimeControlService
 from ..tenant import with_tenant
@@ -51,6 +51,7 @@ Rules:
 - create_strategy_version requires a target_strategy_id that points to the candidate strategy you want to clone.
 - parameter_overrides may only contain safe strategy parameters:
   - grid: grid_count, grid_step_pct, base_order_size, max_grid_levels
+  - futures_grid: grid_count, grid_step_pct, base_order_size, leverage, direction
   - dca: cycle_seconds, amount_per_cycle, price_offset_pct, min_order_volume
   - combo_grid_dca: grid_count, grid_step_pct, base_order_size, max_grid_levels, cycle_seconds, amount_per_cycle, price_offset_pct, min_order_volume
 - Never change exchange_account_id or symbol.
@@ -62,6 +63,7 @@ Rules:
 _AI_MUTATING_ACTIONS = {"activate_strategy", "stop_strategy", "create_strategy_version"}
 _ALLOWED_OVERRIDE_FIELDS = {
     "grid": {"grid_count", "grid_step_pct", "base_order_size", "max_grid_levels"},
+    "futures_grid": {"grid_count", "grid_step_pct", "base_order_size", "leverage", "direction"},
     "dca": {"cycle_seconds", "amount_per_cycle", "price_offset_pct", "min_order_volume"},
     "combo_grid_dca": {
         "grid_count",
@@ -950,6 +952,8 @@ def _prepare_generated_strategy_preview(
     try:
         if strategy_type == "grid":
             validated = GridStrategyConfig.model_validate(merged_config).model_dump()
+        elif strategy_type == "futures_grid":
+            validated = FuturesGridStrategyConfig.model_validate(merged_config).model_dump()
         elif strategy_type == "dca":
             validated = DcaStrategyConfig.model_validate(merged_config).model_dump()
         else:

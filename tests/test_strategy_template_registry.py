@@ -1,3 +1,4 @@
+import pytest
 from app.services.strategy_templates import get_strategy_template, validate_strategy_template_config
 
 
@@ -6,6 +7,47 @@ def test_combo_grid_dca_template_is_live_supported():
     assert template.live_supported is True
     assert template.runtime_strategy_type == "combo_grid_dca"
     assert template.execution_status == "live_supported"
+
+
+def test_futures_grid_template_is_live_supported():
+    template = get_strategy_template("futures_grid")
+    assert template.live_supported is True
+    assert template.runtime_strategy_type == "futures_grid"
+    assert template.execution_status == "live_supported"
+
+
+def test_futures_grid_config_validation_accepts_direction_and_leverage():
+    _, config = validate_strategy_template_config(
+        "futures_grid",
+        {
+            "exchange_account_id": 3,
+            "symbol": "btcusdt",
+            "grid_count": 12,
+            "grid_step_pct": 0.6,
+            "base_order_size": 0.002,
+            "leverage": 5,
+            "direction": "short",
+        },
+    )
+    assert config["symbol"] == "BTCUSDT"
+    assert config["leverage"] == 5
+    assert config["direction"] == "short"
+
+
+def test_futures_grid_config_validation_rejects_invalid_leverage():
+    with pytest.raises(ValueError):
+        validate_strategy_template_config(
+            "futures_grid",
+            {
+                "exchange_account_id": 3,
+                "symbol": "BTCUSDT",
+                "grid_count": 12,
+                "grid_step_pct": 0.6,
+                "base_order_size": 0.002,
+                "leverage": 0,
+                "direction": "neutral",
+            },
+        )
 
 
 def test_combo_grid_dca_config_validation_preserves_advanced_runtime_fields():

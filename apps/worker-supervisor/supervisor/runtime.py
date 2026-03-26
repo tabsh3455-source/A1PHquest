@@ -264,7 +264,7 @@ def _strategy_process(
         context = _load_launch_context(user_id=user_id, strategy_id=strategy_id)
         # The API guarantees only live-enabled runtime startup, but worker still
         # defends against stale strategy rows or mismatched template state.
-        if context.strategy_type not in {"grid", "dca", "combo_grid_dca"}:
+        if context.strategy_type not in {"grid", "futures_grid", "dca", "combo_grid_dca"}:
             raise RuntimeError(f"strategy_type '{context.strategy_type}' is not enabled for live runtime")
         if context.exchange not in {"binance", "okx"}:
             raise RuntimeError(f"exchange '{context.exchange}' is not supported for live runtime")
@@ -764,8 +764,36 @@ def _build_runtime_strategy_class(strategy_type: str, *, emit_trace):
             except Exception as exc:
                 self._record_error(exc)
 
+    class RuntimeFuturesGridStrategy(RuntimeGridStrategy):
+        parameters = ["grid_count", "grid_step_pct", "base_order_size", "max_grid_levels", "leverage", "direction"]
+        variables = [
+            "grid_count",
+            "grid_step_pct",
+            "base_order_size",
+            "max_grid_levels",
+            "leverage",
+            "direction",
+            "grid_seeded",
+            "planned_order_count",
+            "executed_order_count",
+            "last_order_at",
+            "last_error",
+        ]
+
+        def on_start(self) -> None:
+            super().on_start()
+            self._emit_trace(
+                "futures_grid_profile",
+                {
+                    "direction": str(getattr(self, "direction", "neutral")).lower(),
+                    "leverage": _to_float(getattr(self, "leverage", None)),
+                },
+            )
+
     if strategy_type == "grid":
         return RuntimeGridStrategy
+    if strategy_type == "futures_grid":
+        return RuntimeFuturesGridStrategy
     if strategy_type == "dca":
         return RuntimeDcaStrategy
     if strategy_type == "combo_grid_dca":
@@ -798,6 +826,27 @@ def _build_runtime_strategy_setting(context: StrategyLaunchContext) -> dict[str,
             "amount_per_cycle": amount_per_cycle,
             "price_offset_pct": float(config.get("price_offset_pct", 0.15)),
             "min_order_volume": float(config.get("min_order_volume", 0)),
+        }
+    if context.strategy_type == "futures_grid":
+        grid_count = int(config.get("grid_count", 0))
+        grid_step_pct = float(config.get("grid_step_pct", 0))
+        base_order_size = float(config.get("base_order_size", 0))
+        max_grid_levels = int(config.get("max_grid_levels", min(max(grid_count, 2), 40)))
+        leverage = int(config.get("leverage", 0))
+        direction = str(config.get("direction", "")).strip().lower()
+        if grid_count < 2 or grid_step_pct <= 0 or base_order_size <= 0:
+            raise RuntimeError("strategy_param_failed: invalid futures grid config")
+        if leverage < 1 or leverage > 50:
+            raise RuntimeError("strategy_param_failed: invalid futures leverage")
+        if direction not in {"neutral", "long", "short"}:
+            raise RuntimeError("strategy_param_failed: invalid futures direction")
+        return {
+            "grid_count": grid_count,
+            "grid_step_pct": grid_step_pct,
+            "base_order_size": base_order_size,
+            "max_grid_levels": min(max(max_grid_levels, 2), 100),
+            "leverage": leverage,
+            "direction": direction,
         }
     if context.strategy_type == "combo_grid_dca":
         grid_count = int(config.get("grid_count", 0))
@@ -832,8 +881,13 @@ def _seed_grid_orders_for_runtime(strategy, *, reference_price: float) -> int:
     )
     if not buy_prices and not sell_prices:
         return 0
+    direction = str(getattr(strategy, "direction", "neutral") or "neutral").strip().lower()
+    if direction not in {"neutral", "long", "short"}:
+        raise RuntimeError("strategy_param_failed: invalid futures direction")
+    selected_buy_prices = buy_prices if direction in {"neutral", "long"} else []
+    selected_sell_prices = sell_prices if direction in {"neutral", "short"} else []
 
-    for price in buy_prices:
+    for price in selected_buy_prices:
         order_refs = strategy.buy(price, float(strategy.base_order_size))
         strategy._record_order_submission(
             side="BUY",
@@ -841,7 +895,7 @@ def _seed_grid_orders_for_runtime(strategy, *, reference_price: float) -> int:
             volume=float(strategy.base_order_size),
             order_refs=order_refs,
         )
-    for price in sell_prices:
+    for price in selected_sell_prices:
         order_refs = strategy.sell(price, float(strategy.base_order_size))
         strategy._record_order_submission(
             side="SELL",
@@ -850,15 +904,17 @@ def _seed_grid_orders_for_runtime(strategy, *, reference_price: float) -> int:
             order_refs=order_refs,
         )
 
-    planned_order_count = len(buy_prices) + len(sell_prices)
+    planned_order_count = len(selected_buy_prices) + len(selected_sell_prices)
     strategy.write_log(f"grid seeded around {reference_price:.8f}, orders={planned_order_count}")
     strategy._emit_trace(
         "grid_seeded",
         {
             "reference_price": reference_price,
             "planned_order_count": planned_order_count,
-            "buy_levels": len(buy_prices),
-            "sell_levels": len(sell_prices),
+            "buy_levels": len(selected_buy_prices),
+            "sell_levels": len(selected_sell_prices),
+            "direction": direction,
+            "leverage": _to_float(getattr(strategy, "leverage", None)),
         },
     )
     return planned_order_count

@@ -323,7 +323,15 @@ class OrderCancelResponse(BaseModel):
 class StrategyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     template_key: str | None = Field(default=None, min_length=1, max_length=64)
-    strategy_type: Literal["grid", "dca", "combo_grid_dca", "funding_arbitrage", "spot_future_arbitrage", "custom"] | None = None
+    strategy_type: Literal[
+        "grid",
+        "futures_grid",
+        "dca",
+        "combo_grid_dca",
+        "funding_arbitrage",
+        "spot_future_arbitrage",
+        "custom",
+    ] | None = None
     config: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -338,7 +346,15 @@ class StrategyCreateRequest(BaseModel):
 class StrategyUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     template_key: str | None = Field(default=None, min_length=1, max_length=64)
-    strategy_type: Literal["grid", "dca", "combo_grid_dca", "funding_arbitrage", "spot_future_arbitrage", "custom"] | None = None
+    strategy_type: Literal[
+        "grid",
+        "futures_grid",
+        "dca",
+        "combo_grid_dca",
+        "funding_arbitrage",
+        "spot_future_arbitrage",
+        "custom",
+    ] | None = None
     config: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -810,6 +826,33 @@ class OpsRuntimeDriftSample(BaseModel):
     process_id: str | None = None
     last_heartbeat: datetime | None = None
     last_error: str | None = None
+
+
+class OpsFuturesGridRuntimeAudit(BaseModel):
+    strategy_id: int
+    strategy_name: str
+    strategy_status: str
+    runtime_status: str | None = None
+    runtime_ref: str | None = None
+    last_heartbeat: datetime | None = None
+    last_error: str | None = None
+    direction: Literal["neutral", "long", "short"] | None = None
+    leverage: float | None = None
+    profile_event_seq: int | None = None
+    profile_timestamp: datetime | None = None
+    grid_seeded_event_seq: int | None = None
+    grid_seeded_timestamp: datetime | None = None
+    planned_order_count: int | None = None
+    buy_levels: int | None = None
+    sell_levels: int | None = None
+    action_level: Literal["ok", "warning", "critical"] = "ok"
+    audit_flags: list[str] = Field(default_factory=list)
+    suggested_action: str = "No action needed."
+
+
+class OpsFuturesGridAuditResponse(BaseModel):
+    checked_at: datetime
+    runtimes: list[OpsFuturesGridRuntimeAudit] = Field(default_factory=list)
 
 
 class AdminOpsMetricsResponse(BaseModel):

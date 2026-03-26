@@ -133,6 +133,102 @@
     <section class="aq-panel aq-fade-up">
       <div class="aq-section-header">
         <div>
+          <h2>Live Risk Guardrails</h2>
+          <p class="aq-section-copy">
+            Live order placement and live strategy starts are fail-closed. Configure a risk rule here before enabling live runtime.
+          </p>
+        </div>
+        <span class="aq-chip">{{ riskRuleConfigured ? "Live guardrails configured" : "Live blocked by risk setup" }}</span>
+      </div>
+
+      <el-alert
+        v-if="!riskRuleConfigured"
+        title="Risk rule is not configured yet. Live trading remains blocked until you save this form."
+        type="warning"
+        show-icon
+      />
+
+      <div class="settings-stage">
+        <section class="aq-soft-block aq-stack">
+          <div>
+            <h3>Risk Limits</h3>
+            <p class="aq-form-note">Set 0 to disable notional or daily-loss caps, keep position ratio and cancel-rate as mandatory hard limits.</p>
+          </div>
+          <el-form label-position="top">
+            <el-form-item label="Max Order Notional (quote)">
+              <el-input-number
+                v-model="riskForm.max_order_notional"
+                :min="0"
+                :step="10"
+                :precision="2"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="Max Daily Realized Loss (quote)">
+              <el-input-number
+                v-model="riskForm.max_daily_loss"
+                :min="0"
+                :step="10"
+                :precision="2"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="Max Position Ratio (0-1)">
+              <el-input-number
+                v-model="riskForm.max_position_ratio"
+                :min="0.01"
+                :max="1"
+                :step="0.01"
+                :precision="2"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="Max Cancel Rate / Minute">
+              <el-input-number
+                v-model="riskForm.max_cancel_rate_per_minute"
+                :min="1"
+                :max="500"
+                :step="1"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="Circuit Breaker Enabled">
+              <el-switch v-model="riskForm.circuit_breaker_enabled" />
+            </el-form-item>
+          </el-form>
+        </section>
+
+        <section class="aq-soft-block aq-stack">
+          <div>
+            <h3>Risk Runtime State</h3>
+            <p class="aq-form-note">Once saved, these guardrails are enforced on order submit and strategy live-start paths.</p>
+          </div>
+          <div class="aq-note-list">
+            <div class="aq-note-row">
+              <strong>Live gate</strong>
+              <small>{{ riskRuleConfigured ? "Open (risk rule configured)" : "Closed (risk setup required)" }}</small>
+            </div>
+            <div class="aq-note-row">
+              <strong>Last risk update</strong>
+              <small>{{ riskRuleUpdatedAt || "Not configured yet." }}</small>
+            </div>
+            <div class="aq-note-row">
+              <strong>Current limits summary</strong>
+              <small>
+                notional={{ riskForm.max_order_notional }},
+                daily_loss={{ riskForm.max_daily_loss }},
+                ratio={{ riskForm.max_position_ratio }},
+                cancel_rate={{ riskForm.max_cancel_rate_per_minute }}/min
+              </small>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
           <h2>Deploy Snapshot</h2>
           <p class="aq-section-copy">
             These are the install-time defaults the stack will fall back to when you clear database overrides.
@@ -186,10 +282,11 @@
       <section class="aq-soft-block aq-stack">
         <div>
           <h3>Quick Actions</h3>
-          <p class="aq-form-note">Persist current values, discard local edits, or roll back to deploy defaults.</p>
+          <p class="aq-form-note">Persist market-data overrides, save risk guardrails, discard local edits, or roll back to deploy defaults.</p>
         </div>
         <el-space wrap>
           <el-button type="primary" :loading="saveLoading" @click="saveSettings">Save Settings</el-button>
+          <el-button type="warning" :loading="riskSaveLoading" @click="saveRiskRule">Save Risk Rule</el-button>
           <el-button :loading="resetLoading" @click="resetToDefaults">Reset To Defaults</el-button>
           <el-button @click="restoreFromServer">Discard Local Edits</el-button>
         </el-space>
@@ -201,6 +298,10 @@
           <div class="aq-note-row">
             <strong>Updated by user</strong>
             <small>{{ settings.updated_by_user_id || "-" }}</small>
+          </div>
+          <div class="aq-note-row">
+            <strong>Risk rule state</strong>
+            <small>{{ riskRuleConfigured ? "Configured" : "Not configured" }}</small>
           </div>
         </div>
       </section>
@@ -230,11 +331,15 @@ import { computed, onMounted, reactive, ref } from "vue";
 import AppShell from "../components/AppShell.vue";
 import {
   ensureSession,
+  getRiskRule,
   getMarketDataSettings,
+  hasConfiguredRiskRule,
   requestStepUpToken,
   resetMarketDataSettings,
+  upsertRiskRule,
   updateMarketDataSettings,
-  type MarketDataSettings
+  type MarketDataSettings,
+  type RiskRulePayload
 } from "../api";
 
 type EditableMarketDataSettings = Omit<
@@ -245,12 +350,15 @@ type EditableMarketDataSettings = Omit<
 const loading = ref(false);
 const saveLoading = ref(false);
 const resetLoading = ref(false);
+const riskSaveLoading = ref(false);
 const stepUpLoading = ref(false);
 const feedbackMessage = ref("");
 const feedbackType = ref<"success" | "warning" | "error" | "info">("info");
 const stepUpCode = ref("");
 const stepUpToken = ref("");
 const stepUpExpireAt = ref<number | null>(null);
+const riskRuleConfigured = ref(false);
+const riskRuleUpdatedAt = ref<string | null>(null);
 const settings = reactive<MarketDataSettings>({
   market_ws_reconnect_base_seconds: 1,
   market_ws_reconnect_max_seconds: 15,
@@ -268,6 +376,13 @@ const form = reactive<EditableMarketDataSettings>({
   market_ws_idle_timeout_seconds: 25,
   market_candle_cache_size: 1000,
   market_rest_backfill_limit: 500
+});
+const riskForm = reactive<RiskRulePayload>({
+  max_order_notional: 0,
+  max_daily_loss: 0,
+  max_position_ratio: 1,
+  max_cancel_rate_per_minute: 60,
+  circuit_breaker_enabled: true
 });
 
 const stepUpTokenValid = computed(() => Boolean(stepUpToken.value && stepUpExpireAt.value && stepUpExpireAt.value > Date.now()));
@@ -321,11 +436,56 @@ function validateForm() {
   }
 }
 
+function applyRiskRule(payload: RiskRulePayload, updatedAt: string | null) {
+  riskForm.max_order_notional = payload.max_order_notional;
+  riskForm.max_daily_loss = payload.max_daily_loss;
+  riskForm.max_position_ratio = payload.max_position_ratio;
+  riskForm.max_cancel_rate_per_minute = payload.max_cancel_rate_per_minute;
+  riskForm.circuit_breaker_enabled = payload.circuit_breaker_enabled;
+  riskRuleUpdatedAt.value = updatedAt;
+}
+
+function validateRiskForm() {
+  if (riskForm.max_order_notional < 0) {
+    throw new Error("Max order notional cannot be negative.");
+  }
+  if (riskForm.max_daily_loss < 0) {
+    throw new Error("Max daily loss cannot be negative.");
+  }
+  if (riskForm.max_position_ratio <= 0 || riskForm.max_position_ratio > 1) {
+    throw new Error("Max position ratio must be between 0 and 1.");
+  }
+  if (riskForm.max_cancel_rate_per_minute <= 0) {
+    throw new Error("Max cancel rate per minute must be greater than 0.");
+  }
+}
+
+async function reloadRiskRule() {
+  const configured = await hasConfiguredRiskRule();
+  if (!configured) {
+    riskRuleConfigured.value = false;
+    applyRiskRule(
+      {
+        max_order_notional: 0,
+        max_daily_loss: 0,
+        max_position_ratio: 1,
+        max_cancel_rate_per_minute: 60,
+        circuit_breaker_enabled: true
+      },
+      null
+    );
+    return;
+  }
+  const rule = await getRiskRule();
+  riskRuleConfigured.value = true;
+  applyRiskRule(rule, rule.updated_at || null);
+}
+
 async function reload() {
   try {
     loading.value = true;
     await ensureSessionOrRedirect();
-    const response = await getMarketDataSettings();
+    const [response] = await Promise.all([getMarketDataSettings(), reloadRiskRule()]);
     applySettings(response);
     setFeedback("Settings loaded from the active deployment.", "info");
   } catch (error: any) {
@@ -373,6 +533,22 @@ async function saveSettings() {
     setFeedback(error?.response?.data?.detail || error?.message || "Failed to save system settings.", "error");
   } finally {
     saveLoading.value = false;
+  }
+}
+
+async function saveRiskRule() {
+  try {
+    validateRiskForm();
+    riskSaveLoading.value = true;
+    await ensureSessionOrRedirect();
+    const response = await upsertRiskRule({ ...riskForm }, ensureStepUpToken());
+    riskRuleConfigured.value = true;
+    applyRiskRule(response, response.updated_at || null);
+    setFeedback("Risk rule saved. Live orders and live strategy start are now unblocked.", "success");
+  } catch (error: any) {
+    setFeedback(error?.response?.data?.detail || error?.message || "Failed to save risk rule.", "error");
+  } finally {
+    riskSaveLoading.value = false;
   }
 }
 

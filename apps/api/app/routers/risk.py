@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..audit import log_audit_event
@@ -58,17 +58,7 @@ def get_risk_rule(
 ):
     rule = with_tenant(db.query(RiskRule), RiskRule, current_user.id).first()
     if not rule:
-        rule = RiskRule(
-            user_id=current_user.id,
-            max_order_notional=0,
-            max_daily_loss=0,
-            max_position_ratio=1,
-            max_cancel_rate_per_minute=60,
-            circuit_breaker_enabled=True,
-        )
-        db.add(rule)
-        db.commit()
-        db.refresh(rule)
+        raise HTTPException(status_code=404, detail="Risk rule not configured")
     return rule
 
 
@@ -84,6 +74,7 @@ def dry_run_check(
         order_notional=payload.order_notional,
         projected_daily_loss=payload.projected_daily_loss,
         projected_position_ratio=payload.projected_position_ratio,
+        require_rule=False,
     )
     if not decision.allowed:
         notification_service.send_risk_alert(current_user.id, decision.reason)

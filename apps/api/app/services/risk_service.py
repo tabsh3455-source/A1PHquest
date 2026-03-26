@@ -37,6 +37,9 @@ class _SymbolPosition:
 
 
 class RiskService:
+    def has_configured_rule(self, db: Session, *, user_id: int) -> bool:
+        return with_tenant(db.query(RiskRule), RiskRule, user_id).first() is not None
+
     def is_circuit_breaker_enabled(self, db: Session, *, user_id: int) -> bool:
         """
         Read user-level circuit breaker switch from risk rule.
@@ -60,10 +63,17 @@ class RiskService:
         account_id: int | None = None,
         symbol: str | None = None,
         now: datetime | None = None,
+        require_rule: bool = True,
     ) -> RiskDecision:
         rule = with_tenant(db.query(RiskRule), RiskRule, user_id).first()
         if not rule:
-            return RiskDecision(True, "No risk rule configured")
+            if not require_rule:
+                return RiskDecision(True, "Risk rule not configured (dry-run mode)", code="rule_missing_dry_run")
+            return RiskDecision(
+                False,
+                "Risk rule is required before live execution",
+                code="risk_rule_required",
+            )
 
         max_daily_loss = float(rule.max_daily_loss)
         max_order_notional = float(rule.max_order_notional)

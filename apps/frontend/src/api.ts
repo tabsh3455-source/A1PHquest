@@ -257,7 +257,70 @@ export async function listStrategies() {
 export async function getOpsMetrics() {
   await ensureSession();
   const resp = await http.get("/api/ops/metrics");
-  return resp.data;
+  return resp.data as OpsMetricsPayload;
+}
+
+export type OpsAlertItem = {
+  code: string;
+  severity: "warning" | "critical";
+  metric: string;
+  value: number;
+  threshold: number;
+  message: string;
+};
+
+export type OpsMetricsPayload = {
+  checked_at: string;
+  ws_connection_count: number;
+  ws_online_user_count: number;
+  strategy_runtime_counts: Record<string, number>;
+  strategy_process_count: number;
+  runtime_status_drift_count: number;
+  lighter_reconcile_status_counts: Record<string, number>;
+  lighter_reconcile_retry_due_count: number;
+  lighter_reconcile_retry_blocked_count: number;
+  lighter_pending_oldest_age_seconds: number | null;
+  total_audit_events_last_hour: number;
+  failed_audit_events_last_hour: number;
+  failed_audit_event_rate_last_hour: number;
+  critical_audit_events_last_hour: number;
+  audit_action_counts_last_hour: Record<string, number>;
+  alert_items: OpsAlertItem[];
+};
+
+export type OpsFuturesGridRuntimeAudit = {
+  strategy_id: number;
+  strategy_name: string;
+  strategy_status: string;
+  runtime_status: string | null;
+  runtime_ref: string | null;
+  last_heartbeat: string | null;
+  last_error: string | null;
+  direction: "neutral" | "long" | "short" | null;
+  leverage: number | null;
+  profile_event_seq: number | null;
+  profile_timestamp: string | null;
+  grid_seeded_event_seq: number | null;
+  grid_seeded_timestamp: string | null;
+  planned_order_count: number | null;
+  buy_levels: number | null;
+  sell_levels: number | null;
+  action_level: "ok" | "warning" | "critical";
+  audit_flags: string[];
+  suggested_action: string;
+};
+
+export type OpsFuturesGridAuditResponse = {
+  checked_at: string;
+  runtimes: OpsFuturesGridRuntimeAudit[];
+};
+
+export async function getOpsFuturesGridAudit(limit = 20) {
+  await ensureSession();
+  const resp = await http.get("/api/ops/futures-grid/audit", {
+    params: { limit }
+  });
+  return resp.data as OpsFuturesGridAuditResponse;
 }
 
 export type MarketDataSettings = {
@@ -387,10 +450,17 @@ export type RiskRulePayload = {
   circuit_breaker_enabled: boolean;
 };
 
+export type RiskRuleRecord = RiskRulePayload & {
+  id: number;
+  user_id: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export async function getRiskRule() {
   await ensureSession();
   const resp = await http.get("/api/risk-rules");
-  return resp.data as RiskRulePayload & { id: number; user_id: number; created_at: string; updated_at: string };
+  return resp.data as RiskRuleRecord;
 }
 
 export async function upsertRiskRule(payload: RiskRulePayload, stepUpToken: string) {
@@ -398,10 +468,23 @@ export async function upsertRiskRule(payload: RiskRulePayload, stepUpToken: stri
   const resp = await http.put("/api/risk-rules", payload, {
     headers: buildStepUpHeaders(stepUpToken)
   });
-  return resp.data as RiskRulePayload & { id: number; user_id: number; created_at: string; updated_at: string };
+  return resp.data as RiskRuleRecord;
 }
 
-export type StrategyType = "grid" | "dca";
+export async function hasConfiguredRiskRule() {
+  await ensureSession();
+  try {
+    await http.get("/api/risk-rules");
+    return true;
+  } catch (error: any) {
+    if (Number(error?.response?.status || 0) === 404) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export type StrategyType = "grid" | "futures_grid" | "dca" | "combo_grid_dca";
 
 export type StrategyCreatePayload = {
   name: string;

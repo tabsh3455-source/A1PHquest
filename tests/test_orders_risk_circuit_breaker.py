@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AuditEvent, Base, ExchangeAccount, User
 from app.routers import orders as orders_router
-from app.schemas import OrderCancelRequest
+from app.schemas import OrderCancelRequest, OrderCreateRequest
 from app.services.circuit_breaker import CircuitBreakerResult
 from app.services.risk_service import RiskDecision
 
@@ -149,3 +149,33 @@ def test_cancel_rate_rejection_does_not_trigger_circuit_breaker_when_disabled(mo
     event_types = [event["type"] for _, event in ws_events]
     assert "risk_blocked" in event_types
     assert "circuit_breaker_triggered" not in event_types
+
+
+def test_submit_order_blocks_when_risk_rule_missing(monkeypatch, async_runner):
+    with _build_session() as db:
+        user = _create_user(db, "risk-order-missing-rule")
+        account = _create_account(db, user.id)
+        ws = _FakeWsManager()
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ws_manager=ws)))
+        monkeypatch.setattr(orders_router, "notification_service", _FakeNotificationService())
+
+        with pytest.raises(HTTPException) as exc:
+            async_runner(
+                orders_router.submit_order(
+                    payload=OrderCreateRequest(
+                        account_id=account.id,
+                        symbol="BTCUSDT",
+                        side="BUY",
+                        order_type="MARKET",
+                        quantity=0.01,
+                        reference_price=100000,
+                    ),
+                    request=request,
+                    db=db,
+                    current_user=user,
+                )
+            )
+        assert exc.value.status_code == 403
+        assert "risk rule is required" in str(exc.value.detail).lower()
+        actions = [row.action for row in db.query(AuditEvent).order_by(AuditEvent.id.asc()).all()]
+        assert "order_submit_rejected_risk" in actions

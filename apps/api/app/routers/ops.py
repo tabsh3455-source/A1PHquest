@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,8 @@ from ..schemas import (
     AdminOpsMetricsResponse,
     OpsAlertItem,
     OpsErrorTrendPoint,
+    OpsFuturesGridAuditResponse,
+    OpsFuturesGridRuntimeAudit,
     OpsMetricsResponse,
     OpsRuntimeDriftSample,
     OpsTopBacklogUser,
@@ -162,6 +164,160 @@ def get_ops_metrics(
             critical_audit_events_last_hour=critical_audit_events_last_hour,
         ),
     )
+
+
+@router.get("/futures-grid/audit", response_model=OpsFuturesGridAuditResponse)
+def get_futures_grid_audit(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_verified_user),
+):
+    """
+    Return latest futures-grid runtime trace checkpoints for leverage/direction explainability.
+
+    This endpoint is user-scoped and groups by the strategy's current runtime_ref.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    strategy_rows = (
+        with_tenant(
+            db.query(
+                Strategy.id,
+                Strategy.name,
+                Strategy.status,
+                Strategy.runtime_ref,
+                Strategy.updated_at,
+            ),
+            Strategy,
+            current_user.id,
+        )
+        .filter(Strategy.strategy_type == "futures_grid")
+        .order_by(
+            Strategy.updated_at.desc(),
+            Strategy.id.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+    if not strategy_rows:
+        return OpsFuturesGridAuditResponse(checked_at=now, runtimes=[])
+
+    strategy_ids = [int(row.id) for row in strategy_rows]
+    runtime_rows = (
+        with_tenant(
+            db.query(
+                StrategyRuntime.strategy_id,
+                StrategyRuntime.status,
+                StrategyRuntime.last_heartbeat,
+                StrategyRuntime.last_error,
+            ),
+            StrategyRuntime,
+            current_user.id,
+        )
+        .filter(StrategyRuntime.strategy_id.in_(strategy_ids))
+        .all()
+    )
+    runtime_by_strategy = {int(row.strategy_id): row for row in runtime_rows}
+
+    summaries: dict[int, OpsFuturesGridRuntimeAudit] = {}
+    for row in strategy_rows:
+        strategy_id = int(row.id)
+        runtime_row = runtime_by_strategy.get(strategy_id)
+        summaries[strategy_id] = OpsFuturesGridRuntimeAudit(
+            strategy_id=strategy_id,
+            strategy_name=str(row.name or ""),
+            strategy_status=str(row.status or ""),
+            runtime_status=(str(runtime_row.status) if runtime_row and runtime_row.status else None),
+            runtime_ref=(str(row.runtime_ref) if row.runtime_ref else None),
+            last_heartbeat=(_to_naive_utc(runtime_row.last_heartbeat) if runtime_row and runtime_row.last_heartbeat else None),
+            last_error=(str(runtime_row.last_error) if runtime_row and runtime_row.last_error else None),
+        )
+
+    # Read a wider audit window than requested strategies so each runtime has a
+    # chance to expose both profile and seeded events.
+    audit_rows = (
+        with_tenant(
+            db.query(
+                AuditEvent.resource_id,
+                AuditEvent.details_json,
+                AuditEvent.created_at,
+            ),
+            AuditEvent,
+            current_user.id,
+        )
+        .filter(
+            AuditEvent.resource == "strategy",
+            AuditEvent.resource_id.in_([str(item) for item in strategy_ids]),
+            AuditEvent.action == "runtime_trace",
+        )
+        .order_by(
+            AuditEvent.created_at.desc(),
+            AuditEvent.id.desc(),
+        )
+        .limit(max(limit * 50, 200))
+        .all()
+    )
+
+    for resource_id, details_json, created_at in audit_rows:
+        strategy_id = _safe_int(resource_id)
+        if strategy_id is None:
+            continue
+        summary = summaries.get(strategy_id)
+        if not summary:
+            continue
+
+        details = _load_json(details_json)
+        event_type = str(details.get("event_type") or "").strip().lower()
+        if event_type not in {"futures_grid_profile", "grid_seeded"}:
+            continue
+
+        event_runtime_ref = str(details.get("runtime_ref") or "").strip() or None
+        if summary.runtime_ref and event_runtime_ref and event_runtime_ref != summary.runtime_ref:
+            # Ignore historical runtime refs when strategy has already switched.
+            continue
+
+        payload = details.get("payload")
+        normalized_payload = payload if isinstance(payload, dict) else {}
+        event_seq = _safe_int(details.get("event_seq"))
+        event_time = _parse_iso_datetime(details.get("timestamp")) or _to_naive_utc(created_at)
+
+        if event_type == "futures_grid_profile":
+            should_update_profile = summary.profile_event_seq is None
+            if summary.profile_event_seq is not None and event_seq is not None:
+                should_update_profile = event_seq >= summary.profile_event_seq
+            if should_update_profile:
+                summary.profile_event_seq = event_seq
+                summary.profile_timestamp = event_time
+                summary.direction = _normalize_futures_direction(normalized_payload.get("direction"))
+                summary.leverage = _safe_float(normalized_payload.get("leverage"))
+            continue
+
+        should_update_seed = summary.grid_seeded_event_seq is None
+        if summary.grid_seeded_event_seq is not None and event_seq is not None:
+            should_update_seed = event_seq >= summary.grid_seeded_event_seq
+        if should_update_seed:
+            summary.grid_seeded_event_seq = event_seq
+            summary.grid_seeded_timestamp = event_time
+            summary.planned_order_count = _safe_int(normalized_payload.get("planned_order_count"))
+            summary.buy_levels = _safe_int(normalized_payload.get("buy_levels"))
+            summary.sell_levels = _safe_int(normalized_payload.get("sell_levels"))
+
+    for summary in summaries.values():
+        action_level, audit_flags, suggested_action = _evaluate_futures_grid_runtime(summary)
+        summary.action_level = action_level
+        summary.audit_flags = audit_flags
+        summary.suggested_action = suggested_action
+
+    runtime_status_priority = {"running": 0, "starting": 1, "stopping": 2, "stopped": 3, "failed": 4}
+    ordered = sorted(
+        summaries.values(),
+        key=lambda row: (
+            runtime_status_priority.get(str(row.runtime_status or "").lower(), 9),
+            -(row.profile_timestamp.timestamp() if row.profile_timestamp else 0),
+            -(row.grid_seeded_timestamp.timestamp() if row.grid_seeded_timestamp else 0),
+            -row.strategy_id,
+        ),
+    )
+    return OpsFuturesGridAuditResponse(checked_at=now, runtimes=ordered)
 
 
 @router.get("/admin/metrics", response_model=AdminOpsMetricsResponse)
@@ -405,6 +561,76 @@ def _parse_iso_datetime(value: object) -> datetime | None:
     else:
         parsed = parsed.astimezone(timezone.utc)
     return parsed.replace(tzinfo=None)
+
+
+def _safe_int(value: object) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_futures_direction(value: object) -> str | None:
+    direction = str(value or "").strip().lower()
+    return direction if direction in {"neutral", "long", "short"} else None
+
+
+def _evaluate_futures_grid_runtime(summary: OpsFuturesGridRuntimeAudit) -> tuple[str, list[str], str]:
+    flags: list[str] = []
+    runtime_status = str(summary.runtime_status or "").lower()
+
+    if not summary.runtime_ref:
+        flags.append("runtime_not_started")
+    if runtime_status == "failed" or str(summary.last_error or "").strip():
+        flags.append("runtime_failed")
+    if summary.direction is None:
+        flags.append("direction_trace_missing")
+    if summary.leverage is None or summary.leverage <= 0:
+        flags.append("leverage_trace_missing_or_invalid")
+    if runtime_status in {"running", "starting"} and summary.grid_seeded_event_seq is None:
+        flags.append("grid_seed_trace_missing")
+
+    buy_levels = int(summary.buy_levels or 0)
+    sell_levels = int(summary.sell_levels or 0)
+    if summary.direction == "long" and sell_levels > 0:
+        flags.append("direction_seed_mismatch_long")
+    elif summary.direction == "short" and buy_levels > 0:
+        flags.append("direction_seed_mismatch_short")
+    elif summary.direction == "neutral" and summary.grid_seeded_event_seq is not None and (buy_levels == 0 or sell_levels == 0):
+        flags.append("direction_seed_mismatch_neutral")
+
+    if any(flag in flags for flag in {"runtime_failed", "direction_seed_mismatch_long", "direction_seed_mismatch_short", "direction_seed_mismatch_neutral"}):
+        return (
+            "critical",
+            flags,
+            "Pause this strategy, inspect direction/leverage trace against seeded sides, then restart after correcting config/runtime state.",
+        )
+    if flags:
+        if "runtime_not_started" in flags:
+            return (
+                "warning",
+                flags,
+                "Start the strategy to generate runtime profile and seed traces before enabling unattended execution.",
+            )
+        if "grid_seed_trace_missing" in flags:
+            return (
+                "warning",
+                flags,
+                "Wait for the next market tick, then re-check seed trace. If still missing, verify market feed and runtime health.",
+            )
+        return (
+            "warning",
+            flags,
+            "Refresh trace by restarting strategy and confirm futures direction/leverage parameters are persisted correctly.",
+        )
+    return ("ok", [], "No action needed.")
 
 
 def _to_naive_utc(value: datetime) -> datetime:

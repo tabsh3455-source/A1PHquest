@@ -493,3 +493,73 @@ def test_ai_autopilot_dry_run_create_strategy_version_supports_combo_grid_dca(as
     assert changed_fields["max_grid_levels"] == 16
     assert changed_fields["cycle_seconds"] == 300
     assert changed_fields["price_offset_pct"] == 0.25
+
+
+def test_ai_autopilot_dry_run_create_strategy_version_supports_futures_grid(async_runner, monkeypatch):
+    session_factory = _build_sessionmaker()
+    with session_factory() as db:
+        user, _, account, _, _, policy = _seed_policy_graph(db)
+        futures_strategy = Strategy(
+            user_id=user.id,
+            name="futures-delta",
+            template_key="futures_grid",
+            strategy_type="futures_grid",
+            config_json=json.dumps(
+                {
+                    "exchange_account_id": account.id,
+                    "symbol": "BTCUSDT",
+                    "grid_count": 10,
+                    "grid_step_pct": 0.45,
+                    "base_order_size": 0.001,
+                    "max_grid_levels": 12,
+                    "leverage": 3,
+                    "direction": "neutral",
+                }
+            ),
+            status="stopped",
+        )
+        db.add(futures_strategy)
+        db.commit()
+        db.refresh(futures_strategy)
+        policy.strategy_ids_json = json.dumps([futures_strategy.id])
+        db.add(policy)
+        db.commit()
+        policy_id = policy.id
+        futures_strategy_id = futures_strategy.id
+
+    service = AiAutopilotService(
+        market_data_service=_FakeMarketDataService(),
+        ws_manager=_FakeWsManager(),
+    )
+    monkeypatch.setattr("app.services.ai_autopilot.SessionLocal", session_factory)
+    service._runtime_control = _FakeRuntimeControl()
+
+    async def _fake_call_provider(*, provider, policy, context):
+        return {"provider": "fake"}, {
+            "action": "create_strategy_version",
+            "target_strategy_id": futures_strategy_id,
+            "confidence": 0.9,
+            "rationale": "Bias short with higher leverage in a downside move",
+            "parameter_overrides": {
+                "direction": "short",
+                "leverage": 7,
+                "grid_step_pct": 0.55,
+            },
+        }
+
+    monkeypatch.setattr(service, "_call_provider", _fake_call_provider)
+
+    decision = async_runner(
+        service.run_policy_once(
+            policy_id=policy_id,
+            trigger_source="manual",
+            dry_run_override=True,
+        )
+    )
+
+    assert decision.status == "dry_run"
+    execution_result = json.loads(decision.execution_result_json)
+    changed_fields = execution_result["proposed_strategy"]["changed_fields"]
+    assert changed_fields["direction"] == "short"
+    assert changed_fields["leverage"] == 7
+    assert changed_fields["grid_step_pct"] == 0.55

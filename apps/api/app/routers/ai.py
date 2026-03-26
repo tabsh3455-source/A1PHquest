@@ -381,7 +381,7 @@ def _validate_policy_scope(
                 status_code=400,
                 detail=f"strategy {strategy.id} does not match the selected account/symbol scope",
             )
-        if strategy.strategy_type not in {"grid", "dca", "combo_grid_dca"}:
+        if strategy.strategy_type not in {"grid", "futures_grid", "dca", "combo_grid_dca"}:
             raise HTTPException(
                 status_code=400,
                 detail=f"strategy {strategy.id} uses unsupported type '{strategy.strategy_type}'",

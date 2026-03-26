@@ -15,6 +15,13 @@
       show-icon
       class="aq-fade-up"
     />
+    <el-alert
+      v-if="!riskRuleConfigured"
+      title="Risk rule is not configured. Dry-run remains available, but live runtime actions from AI are blocked until risk setup is completed."
+      type="warning"
+      show-icon
+      class="aq-fade-up"
+    />
 
     <section class="aq-panel aq-fade-up">
       <div class="aq-section-header">
@@ -369,6 +376,7 @@ import {
   disableAiPolicy,
   enableAiPolicy,
   ensureSession,
+  hasConfiguredRiskRule,
   listAiDecisions,
   listAiPolicies,
   listAiProviders,
@@ -394,6 +402,7 @@ const policyActionId = ref<number | null>(null);
 const policyActionKind = ref<"enable" | "disable" | null>(null);
 const feedbackMessage = ref("");
 const feedbackType = ref<"success" | "warning" | "error" | "info">("info");
+const riskRuleConfigured = ref(false);
 const stepUpCode = ref("");
 const stepUpToken = ref("");
 const stepUpExpireAt = ref<number | null>(null);
@@ -441,7 +450,10 @@ const stepUpRemainingLabel = computed(() => {
 
 const editableStrategies = computed(() =>
   strategies.value.filter((item) =>
-    item.strategy_type === "grid" || item.strategy_type === "dca" || item.strategy_type === "combo_grid_dca"
+    item.strategy_type === "grid" ||
+    item.strategy_type === "futures_grid" ||
+    item.strategy_type === "dca" ||
+    item.strategy_type === "combo_grid_dca"
   )
 );
 const enabledPolicyCount = computed(() => policies.value.filter((item) => item.status === "enabled").length);
@@ -545,18 +557,20 @@ async function reloadAll() {
   try {
     loading.value = true;
     await ensureSessionOrRedirect();
-    const [providerRows, policyRows, decisionRows, accountRows, strategyRows] = await Promise.all([
+    const [providerRows, policyRows, decisionRows, accountRows, strategyRows, riskConfigured] = await Promise.all([
       listAiProviders(),
       listAiPolicies(),
       listAiDecisions(undefined, 30),
       listExchangeAccounts(),
-      listStrategies()
+      listStrategies(),
+      hasConfiguredRiskRule()
     ]);
     providers.value = providerRows;
     policies.value = policyRows;
     decisions.value = decisionRows;
     exchangeAccounts.value = accountRows;
     strategies.value = strategyRows;
+    riskRuleConfigured.value = riskConfigured;
     if (!providerForm.id && !providerForm.name && providers.value.length) {
       providerForm.name = providers.value[0].name;
     }
@@ -636,6 +650,10 @@ async function savePolicy() {
     setFeedback("Choose at least one allowed AI action.", "warning");
     return;
   }
+  if (!riskRuleConfigured.value && policyForm.execution_mode === "auto" && policyForm.status === "enabled") {
+    setFeedback("Risk rule setup is required before enabling auto execution.", "warning");
+    return;
+  }
   try {
     policySaving.value = true;
     await ensureSessionOrRedirect();
@@ -671,6 +689,10 @@ async function savePolicy() {
 }
 
 async function runPolicy(row: AiPolicyItem, dryRunOverride: boolean) {
+  if (!dryRunOverride && !riskRuleConfigured.value) {
+    setFeedback("Live AI execution is blocked until a risk rule is configured.", "warning");
+    return;
+  }
   try {
     await ensureSessionOrRedirect();
     const result = await runAiPolicy(row.id, ensureStepUpToken(), dryRunOverride);
@@ -685,6 +707,10 @@ async function runPolicy(row: AiPolicyItem, dryRunOverride: boolean) {
 }
 
 async function enablePolicy(row: AiPolicyItem) {
+  if (row.execution_mode === "auto" && !riskRuleConfigured.value) {
+    setFeedback("Risk rule setup is required before enabling auto policies.", "warning");
+    return;
+  }
   try {
     policyActionId.value = row.id;
     policyActionKind.value = "enable";

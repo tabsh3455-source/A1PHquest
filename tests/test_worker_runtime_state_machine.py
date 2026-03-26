@@ -492,6 +492,112 @@ def test_build_runtime_strategy_setting_rejects_invalid_combo_grid_dca_config():
         assert "strategy_param_failed" in str(exc)
 
 
+def test_build_runtime_strategy_setting_accepts_futures_grid_config():
+    context = worker_runtime.StrategyLaunchContext(
+        user_id=1,
+        strategy_id=43,
+        strategy_type="futures_grid",
+        config={
+            "symbol": "BTCUSDT",
+            "grid_count": 8,
+            "grid_step_pct": 0.4,
+            "base_order_size": 0.001,
+            "max_grid_levels": 10,
+            "leverage": 5,
+            "direction": "short",
+        },
+        exchange="binance",
+        is_testnet=True,
+        api_key="k",
+        api_secret="s",
+        passphrase=None,
+    )
+    setting = worker_runtime._build_runtime_strategy_setting(context)
+    assert setting["grid_count"] == 8
+    assert setting["max_grid_levels"] == 10
+    assert setting["leverage"] == 5
+    assert setting["direction"] == "short"
+
+
+def test_build_runtime_strategy_setting_rejects_invalid_futures_grid_config():
+    context = worker_runtime.StrategyLaunchContext(
+        user_id=1,
+        strategy_id=44,
+        strategy_type="futures_grid",
+        config={
+            "symbol": "BTCUSDT",
+            "grid_count": 8,
+            "grid_step_pct": 0.4,
+            "base_order_size": 0.001,
+            "leverage": 0,
+            "direction": "neutral",
+        },
+        exchange="binance",
+        is_testnet=True,
+        api_key="k",
+        api_secret="s",
+        passphrase=None,
+    )
+    try:
+        worker_runtime._build_runtime_strategy_setting(context)
+        raise AssertionError("Expected RuntimeError for invalid futures grid config")
+    except RuntimeError as exc:
+        assert "strategy_param_failed" in str(exc)
+
+
+class _FakeGridSeederStrategy:
+    def __init__(self, direction: str) -> None:
+        self.grid_count = 6
+        self.grid_step_pct = 1.0
+        self.max_grid_levels = 6
+        self.base_order_size = 0.01
+        self.direction = direction
+        self.leverage = 3
+        self.buy_calls: list[tuple[float, float]] = []
+        self.sell_calls: list[tuple[float, float]] = []
+
+    def buy(self, price: float, volume: float):
+        self.buy_calls.append((price, volume))
+        return [f"BUY-{len(self.buy_calls)}"]
+
+    def sell(self, price: float, volume: float):
+        self.sell_calls.append((price, volume))
+        return [f"SELL-{len(self.sell_calls)}"]
+
+    def _record_order_submission(self, **_: object):
+        return None
+
+    def write_log(self, _: str):
+        return None
+
+    def _emit_trace(self, _: str, __: dict):
+        return None
+
+
+def test_seed_grid_orders_for_runtime_neutral_keeps_both_sides():
+    strategy = _FakeGridSeederStrategy("neutral")
+    planned = worker_runtime._seed_grid_orders_for_runtime(strategy, reference_price=100.0)
+    assert planned == len(strategy.buy_calls) + len(strategy.sell_calls)
+    assert len(strategy.buy_calls) > 0
+    assert len(strategy.sell_calls) > 0
+
+
+def test_seed_grid_orders_for_runtime_long_keeps_buy_side_only():
+    strategy = _FakeGridSeederStrategy("long")
+    planned = worker_runtime._seed_grid_orders_for_runtime(strategy, reference_price=100.0)
+    assert planned == len(strategy.buy_calls)
+    assert len(strategy.buy_calls) > 0
+    assert len(strategy.sell_calls) == 0
+
+
+def test_seed_grid_orders_for_runtime_short_keeps_sell_side_only():
+    strategy = _FakeGridSeederStrategy("short")
+    planned = worker_runtime._seed_grid_orders_for_runtime(strategy, reference_price=100.0)
+    assert planned == len(strategy.sell_calls)
+    assert len(strategy.sell_calls) > 0
+    assert len(strategy.buy_calls) == 0
+
+
 def test_compute_grid_order_prices_returns_symmetric_ladder_and_caps_levels():
     buy_prices, sell_prices = worker_runtime._compute_grid_order_prices(
         reference_price=100,

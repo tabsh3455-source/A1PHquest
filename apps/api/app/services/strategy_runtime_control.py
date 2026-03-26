@@ -6,7 +6,7 @@ import json
 from sqlalchemy.orm import Session
 
 from ..audit import log_audit_event
-from ..models import ExchangeAccount, Strategy, StrategyRuntime
+from ..models import ExchangeAccount, RiskRule, Strategy, StrategyRuntime
 from ..services.strategy_supervisor import RuntimeState, StrategySupervisorClient
 from ..tenant import with_tenant
 
@@ -114,7 +114,7 @@ def _validate_live_runtime_strategy(
     db: Session,
     user_id: int,
 ) -> None:
-    if strategy.strategy_type not in {"grid", "dca", "combo_grid_dca"}:
+    if strategy.strategy_type not in {"grid", "futures_grid", "dca", "combo_grid_dca"}:
         raise StrategyRuntimeControlError(
             f"strategy_type '{strategy.strategy_type}' is not enabled for live runtime"
         )
@@ -134,6 +134,10 @@ def _validate_live_runtime_strategy(
         raise StrategyRuntimeControlError(
             f"exchange '{account.exchange}' is not supported for live runtime"
         )
+
+    has_risk_rule = with_tenant(db.query(RiskRule), RiskRule, user_id).first() is not None
+    if not has_risk_rule:
+        raise StrategyRuntimeControlError("risk rule is required before live runtime start")
 
 
 def _safe_load_json(raw: str) -> dict[str, Any]:

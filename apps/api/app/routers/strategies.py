@@ -30,11 +30,13 @@ from ..services.strategy_supervisor import (
     StrategySupervisorError,
     StrategySupervisorUnavailableError,
 )
+from ..services.risk_service import RiskService
 from ..tenant import with_tenant
 from ..ws_manager import WsManager
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 supervisor = StrategySupervisorClient()
+risk_service = RiskService()
 
 
 def _get_ws_manager(request: Request) -> WsManager:
@@ -169,7 +171,7 @@ async def start_strategy(
 
     template = _resolve_strategy_template_for_strategy(strategy)
     config = _validate_existing_strategy(strategy, template)
-    if not template.live_supported or strategy.strategy_type not in {"grid", "dca", "combo_grid_dca"}:
+    if not template.live_supported or strategy.strategy_type not in {"grid", "futures_grid", "dca", "combo_grid_dca"}:
         raise HTTPException(
             status_code=400,
             detail=f"template '{template.template_key}' is not enabled for live runtime yet",
@@ -181,6 +183,11 @@ async def start_strategy(
         raise HTTPException(
             status_code=400,
             detail=f"exchange '{exchange_account.exchange}' is not supported for live runtime",
+        )
+    if not risk_service.has_configured_rule(db, user_id=current_user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="Risk rule is required before starting live strategies",
         )
 
     try:
@@ -557,7 +564,10 @@ def _validate_strategy_config(template_key: str, config: dict[str, Any]) -> tupl
 
 def _resolve_strategy_template_for_strategy(strategy: Strategy) -> StrategyTemplateSpec:
     candidate_key = str(strategy.template_key or "").strip()
-    if not candidate_key or (candidate_key == "custom" and strategy.strategy_type in {"grid", "dca", "funding_arbitrage", "spot_future_arbitrage"}):
+    if not candidate_key or (
+        candidate_key == "custom"
+        and strategy.strategy_type in {"grid", "futures_grid", "dca", "combo_grid_dca", "funding_arbitrage", "spot_future_arbitrage"}
+    ):
         candidate_key = strategy.strategy_type
     try:
         return get_strategy_template(candidate_key)

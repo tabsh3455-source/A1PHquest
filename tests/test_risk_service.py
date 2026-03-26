@@ -208,6 +208,37 @@ def test_cancel_rate_allows_when_below_threshold():
         assert decision.allowed
 
 
+def test_order_check_fails_closed_when_risk_rule_missing():
+    service = RiskService()
+    with _build_session() as db:
+        user = _create_user(db, "risk-missing")
+        decision = service.evaluate_order(
+            db,
+            user_id=user.id,
+            order_notional=100,
+            projected_daily_loss=0,
+            projected_position_ratio=0.1,
+        )
+        assert decision.allowed is False
+        assert decision.code == "risk_rule_required"
+
+
+def test_order_check_allows_dry_run_when_rule_missing():
+    service = RiskService()
+    with _build_session() as db:
+        user = _create_user(db, "risk-missing-dry-run")
+        decision = service.evaluate_order(
+            db,
+            user_id=user.id,
+            order_notional=100,
+            projected_daily_loss=0,
+            projected_position_ratio=0.1,
+            require_rule=False,
+        )
+        assert decision.allowed is True
+        assert decision.code == "rule_missing_dry_run"
+
+
 def test_order_notional_check_rejects_oversized_order():
     service = RiskService()
 

@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.models import AuditEvent, Base, ExchangeAccount, Strategy, StrategyRuntime, User
+from app.models import AuditEvent, Base, ExchangeAccount, RiskRule, Strategy, StrategyRuntime, User
 from app.routers import strategies as strategies_router
 from app.services.strategy_supervisor import RuntimeState, StrategySupervisorUnavailableError
 
@@ -45,6 +45,21 @@ def _create_account(db: Session, user_id: int, exchange: str = "binance") -> Exc
     db.commit()
     db.refresh(account)
     return account
+
+
+def _create_risk_rule(db: Session, user_id: int) -> RiskRule:
+    rule = RiskRule(
+        user_id=user_id,
+        max_order_notional=0,
+        max_daily_loss=0,
+        max_position_ratio=1,
+        max_cancel_rate_per_minute=60,
+        circuit_breaker_enabled=True,
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return rule
 
 
 class _FakeWsManager:
@@ -326,6 +341,7 @@ def test_start_strategy_returns_503_when_supervisor_unavailable_and_no_fake_runn
     with _build_session() as db:
         user = _create_user(db, "runtime-503-user")
         account = _create_account(db, user.id, exchange="binance")
+        _create_risk_rule(db, user.id)
         strategy = Strategy(
             user_id=user.id,
             name="grid-live",
@@ -371,6 +387,7 @@ def test_start_strategy_emits_runtime_update_with_strategy_runtime_ref(monkeypat
     with _build_session() as db:
         user = _create_user(db, "runtime-success-user")
         account = _create_account(db, user.id, exchange="binance")
+        _create_risk_rule(db, user.id)
         strategy = Strategy(
             user_id=user.id,
             name="grid-live-success",
@@ -428,6 +445,93 @@ def test_start_strategy_emits_runtime_update_with_strategy_runtime_ref(monkeypat
         audit_actions = [item.action for item in db.query(AuditEvent).all()]
         assert "runtime_order_submitted" in audit_actions
         assert "runtime_trade_filled" in audit_actions
+
+
+def test_start_strategy_accepts_futures_grid_when_risk_rule_is_configured(monkeypatch, async_runner):
+    with _build_session() as db:
+        user = _create_user(db, "runtime-futures-user")
+        account = _create_account(db, user.id, exchange="okx")
+        _create_risk_rule(db, user.id)
+        strategy = Strategy(
+            user_id=user.id,
+            name="futures-grid-live",
+            template_key="futures_grid",
+            strategy_type="futures_grid",
+            config_json=json.dumps(
+                {
+                    "exchange_account_id": account.id,
+                    "symbol": "BTC-USDT-SWAP",
+                    "grid_count": 10,
+                    "grid_step_pct": 0.7,
+                    "base_order_size": 0.002,
+                    "leverage": 6,
+                    "direction": "short",
+                }
+            ),
+            status="stopped",
+        )
+        db.add(strategy)
+        db.commit()
+        db.refresh(strategy)
+
+        ws = _FakeWsManager()
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ws_manager=ws)))
+        monkeypatch.setattr(strategies_router, "supervisor", _RunningSupervisor())
+
+        response = async_runner(
+            strategies_router.start_strategy(
+                strategy_id=strategy.id,
+                request=request,
+                db=db,
+                current_user=user,
+            )
+        )
+
+        assert response.runtime_ref == "rt-success-1"
+        assert response.status == "running"
+        db.refresh(strategy)
+        assert strategy.status == "running"
+        assert strategy.runtime_ref == "rt-success-1"
+
+
+def test_start_strategy_requires_risk_rule_before_live_runtime(monkeypatch, async_runner):
+    with _build_session() as db:
+        user = _create_user(db, "runtime-risk-required-user")
+        account = _create_account(db, user.id, exchange="binance")
+        strategy = Strategy(
+            user_id=user.id,
+            name="grid-live-risk-check",
+            strategy_type="grid",
+            config_json=json.dumps(
+                {
+                    "exchange_account_id": account.id,
+                    "symbol": "BTCUSDT",
+                    "grid_count": 8,
+                    "grid_step_pct": 0.8,
+                    "base_order_size": 0.002,
+                }
+            ),
+            status="stopped",
+        )
+        db.add(strategy)
+        db.commit()
+        db.refresh(strategy)
+
+        ws = _FakeWsManager()
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ws_manager=ws)))
+        monkeypatch.setattr(strategies_router, "supervisor", _RunningSupervisor())
+
+        with pytest.raises(HTTPException) as exc:
+            async_runner(
+                strategies_router.start_strategy(
+                    strategy_id=strategy.id,
+                    request=request,
+                    db=db,
+                    current_user=user,
+                )
+            )
+        assert exc.value.status_code == 403
+        assert "risk rule" in str(exc.value.detail).lower()
 
 
 def test_runtime_consistency_endpoint_reports_missing_runtime_row():

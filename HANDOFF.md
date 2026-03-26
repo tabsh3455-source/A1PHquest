@@ -18,7 +18,7 @@
 - Do not add Coinbase-related code or plans.
 - Do not introduce server-side private key custody for Lighter.
 - Lighter must remain `tx_type + tx_info` passthrough.
-- Live runtime is only enabled for `grid` and `dca`.
+- Live runtime is enabled for `grid`, `futures_grid`, `dca`, and `combo_grid_dca`.
 - `custom` strategies may exist, but must not enter live start flow.
 - New core logic must include comments and tests.
 - Production deployment target is a Linux VPS, not WSL.
@@ -41,15 +41,13 @@ Repo layout:
 
 ## 4. Current Verified State
 
-Latest verified baseline on `2026-03-24`:
+Latest verified baseline on `2026-03-26`:
 
-- `pytest -q` passed: `196 passed`
-- `python -m bandit -q -r apps/api apps/worker-supervisor` passed
-- `bash deploy/db_migrate.sh` passed
-- Docker e2e runtime flow passed for `OKX`
-- Previous Docker e2e runtime flow also passed for `Binance`
-- CTA runtime start/stop flow is working in Docker
-- WS replay has been upgraded from in-memory-only to optional DB-backed replay
+- Targeted backend regression suite passed (`risk + strategy runtime + strategy control`): `28 passed`
+- Frontend Docker production build passed
+- CTA runtime start/stop flow remains working in Docker
+- WS replay remains DB-backed capable (`memory` and `db` modes)
+- Live runtime gate now fails closed when risk rule is not configured
 
 Note:
 
@@ -74,6 +72,7 @@ Note:
 - step-up token cannot be reused as a normal access token
 - proxy header trust is disabled by default and nginx forwarding was hardened
 - risk evaluation no longer trusts client-supplied position ratio for live orders
+- live order submit and live strategy start now fail closed when no risk rule exists
 
 ### Exchange and data consistency
 
@@ -196,7 +195,7 @@ Fixed constraints:
 3. Lighter remains client-signature passthrough only (tx_type + tx_info)
 4. Coinbase is permanently excluded
 5. Security is local AES master key + Google Authenticator + step-up token
-6. Live runtime is only enabled for grid and dca
+6. Live runtime is enabled for grid, futures_grid, dca, and combo_grid_dca
 7. New core logic must include comments and tests
 
 Current verified state:
@@ -218,4 +217,3 @@ Read these files first:
 
 Then continue the next planned operational hardening work without rebuilding the scaffold from scratch.
 ```
-

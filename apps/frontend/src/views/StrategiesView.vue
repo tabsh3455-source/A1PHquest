@@ -66,6 +66,13 @@
           :type="feedbackType"
           show-icon
         />
+        <el-alert
+          v-if="!riskRuleConfigured"
+          style="margin-top: 12px"
+          title="Live risk rule is not configured yet. Live strategy starts are blocked until you save risk guardrails in Settings."
+          type="warning"
+          show-icon
+        />
 
         <el-table
           :data="rows"
@@ -83,6 +90,12 @@
           <el-table-column label="Symbol" width="140">
             <template #default="{ row }">{{ String(row.config.symbol || "-") }}</template>
           </el-table-column>
+          <el-table-column label="Direction" width="120">
+            <template #default="{ row }">{{ strategyDirectionLabel(row) }}</template>
+          </el-table-column>
+          <el-table-column label="Leverage" width="100">
+            <template #default="{ row }">{{ strategyLeverageLabel(row) }}</template>
+          </el-table-column>
           <el-table-column label="Account" min-width="170">
             <template #default="{ row }">{{ accountLabel(row.config.exchange_account_id) }}</template>
           </el-table-column>
@@ -93,8 +106,8 @@
           </el-table-column>
           <el-table-column label="Run" width="110">
             <template #default="{ row }">
-              <el-tag :type="row.live_supported ? 'success' : 'warning'">
-                {{ row.live_supported ? "Live" : "Draft" }}
+              <el-tag :type="row.live_supported ? (riskRuleConfigured ? 'success' : 'warning') : 'info'">
+                {{ row.live_supported ? (riskRuleConfigured ? "Live" : "Blocked") : "Draft" }}
               </el-tag>
             </template>
           </el-table-column>
@@ -105,7 +118,14 @@
                 <el-button size="small" @click.stop="duplicateStrategy(row)">Duplicate</el-button>
                 <el-button size="small" @click.stop="inspectRuntime(row)">Runtime</el-button>
                 <el-button
-                  v-if="row.live_supported && isRunnable(row.status)"
+                  v-if="row.live_supported && !riskRuleConfigured"
+                  size="small"
+                  disabled
+                >
+                  Risk setup required
+                </el-button>
+                <el-button
+                  v-else-if="row.live_supported && isRunnable(row.status)"
                   size="small"
                   type="primary"
                   :loading="actionLoadingId === row.id && actionMode === 'start'"
@@ -226,6 +246,12 @@
           <h3>Runtime Control</h3>
           <p class="aq-form-note">Starting or stopping a live-supported strategy still requires a fresh step-up token.</p>
         </div>
+        <el-alert
+          v-if="!riskRuleConfigured"
+          title="Live runtime is blocked until a risk rule is configured."
+          type="warning"
+          show-icon
+        />
         <el-form label-position="top">
           <el-form-item label="2FA Code">
             <el-input v-model="stepUpCode" maxlength="6" placeholder="Enter current Google Authenticator code" />
@@ -243,6 +269,8 @@
         <el-descriptions v-if="selectedStrategy" :column="1" border size="small">
           <el-descriptions-item label="Selected">{{ selectedStrategy.name }}</el-descriptions-item>
           <el-descriptions-item label="Template">{{ selectedStrategy.template_display_name }}</el-descriptions-item>
+          <el-descriptions-item label="Direction">{{ strategyDirectionLabel(selectedStrategy) }}</el-descriptions-item>
+          <el-descriptions-item label="Leverage">{{ strategyLeverageLabel(selectedStrategy) }}</el-descriptions-item>
           <el-descriptions-item label="Status">
             <el-tag :type="statusType(selectedStrategy.status)">{{ selectedStrategy.status }}</el-tag>
           </el-descriptions-item>
@@ -262,7 +290,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import StrategyCandleChart from "../components/StrategyCandleChart.vue";
@@ -270,6 +298,7 @@ import {
   createStrategy,
   ensureSession,
   getErrorMessage,
+  hasConfiguredRiskRule,
   getStrategyRuntime,
   listExchangeAccounts,
   listStrategies,
@@ -297,6 +326,7 @@ const actionLoadingId = ref<number | null>(null);
 const actionMode = ref<"start" | "stop" | null>(null);
 const feedbackMessage = ref("");
 const feedbackType = ref<"success" | "warning" | "error" | "info">("info");
+const riskRuleConfigured = ref(false);
 const selectedStrategyId = ref<number | null>(null);
 const editingStrategyId = ref<number | null>(null);
 const runtimeState = ref<StrategyRuntime | null>(null);
@@ -380,6 +410,28 @@ function accountLabel(accountId: unknown) {
   return account ? `${account.account_alias} (${account.exchange})` : id ? `Account #${id}` : "-";
 }
 
+function strategyDirectionLabel(row: StrategyItem | null) {
+  if (!row || row.strategy_type !== "futures_grid") {
+    return "-";
+  }
+  const direction = String(row.config?.direction || "neutral").trim().toLowerCase();
+  if (direction === "long") {
+    return "Long only";
+  }
+  if (direction === "short") {
+    return "Short only";
+  }
+  return "Neutral";
+}
+
+function strategyLeverageLabel(row: StrategyItem | null) {
+  if (!row || row.strategy_type !== "futures_grid") {
+    return "-";
+  }
+  const value = Number(row.config?.leverage || 0);
+  return value > 0 ? `${value}x` : "-";
+}
+
 function rowClassName({ row }: { row: StrategyItem }) {
   return row.id === selectedStrategyId.value ? "is-selected-row" : "";
 }
@@ -460,11 +512,42 @@ async function loadData() {
     if (!Object.keys(form.config).length) {
       applySelectedTemplate();
     }
+    riskRuleConfigured.value = await hasConfiguredRiskRule();
+    await applyRouteStrategySelection();
   } catch (error: any) {
     setFeedback(getErrorMessage(error, "Failed to load strategy workspace."), "error");
   } finally {
     loading.value = false;
   }
+}
+
+function findRouteStrategyTarget() {
+  const strategyId = Number(route.query.strategy_id || 0);
+  if (strategyId > 0) {
+    return rows.value.find((item) => item.id === strategyId) || null;
+  }
+  const runtimeRef = String(route.query.runtime_ref || "").trim();
+  if (runtimeRef) {
+    return rows.value.find((item) => String(item.runtime_ref || "").trim() === runtimeRef) || null;
+  }
+  return null;
+}
+
+async function applyRouteStrategySelection() {
+  if (!rows.value.length) {
+    return;
+  }
+  const target = findRouteStrategyTarget();
+  if (!target) {
+    return;
+  }
+  selectedStrategyId.value = target.id;
+  if (target.runtime_ref) {
+    await inspectRuntime(target);
+    return;
+  }
+  runtimeState.value = null;
+  runtimeStrategyId.value = null;
 }
 
 async function issueStepUpToken() {
@@ -538,6 +621,10 @@ async function inspectRuntime(row: StrategyItem) {
 }
 
 async function startSelectedStrategy(row: StrategyItem) {
+  if (!riskRuleConfigured.value) {
+    setFeedback("Live start is blocked until a risk rule is configured in Settings.", "warning");
+    return;
+  }
   actionLoadingId.value = row.id;
   actionMode.value = "start";
   try {
@@ -570,6 +657,13 @@ async function stopSelectedStrategy(row: StrategyItem) {
 }
 
 onMounted(loadData);
+
+watch(
+  () => [route.query.strategy_id, route.query.runtime_ref, rows.value.length],
+  () => {
+    void applyRouteStrategySelection();
+  }
+);
 </script>
 
 <style scoped>

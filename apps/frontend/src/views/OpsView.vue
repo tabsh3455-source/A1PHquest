@@ -80,6 +80,61 @@
     <section v-if="metrics" class="aq-panel aq-fade-up">
       <div class="aq-section-header">
         <div>
+          <h2>Futures Grid Audit</h2>
+          <p class="aq-section-copy">
+            Runtime-level trace snapshots for direction and leverage. This panel helps verify whether futures grid execution semantics match configured intent.
+          </p>
+        </div>
+      </div>
+
+      <el-table v-if="futuresAudit.length" :data="futuresAudit" size="small">
+        <el-table-column label="Runtime Ref" min-width="180">
+          <template #default="{ row }">{{ row.runtime_ref || "-" }}</template>
+        </el-table-column>
+        <el-table-column prop="strategy_name" label="Strategy" min-width="160" />
+        <el-table-column label="Open" width="120">
+          <template #default="{ row }">
+            <el-button size="small" @click="openStrategy(row)">Open</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column label="Runtime" width="120">
+          <template #default="{ row }">
+            <el-tag :type="runtimeStatusType(row.runtime_status)">{{ row.runtime_status || "unknown" }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Action Level" width="130">
+          <template #default="{ row }">
+            <el-tag :type="actionLevelType(row.action_level)">{{ row.action_level }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Direction" width="120">
+          <template #default="{ row }">{{ directionLabel(row.direction) }}</template>
+        </el-table-column>
+        <el-table-column label="Leverage" width="110">
+          <template #default="{ row }">{{ leverageLabel(row.leverage) }}</template>
+        </el-table-column>
+        <el-table-column label="Grid Seed" min-width="170">
+          <template #default="{ row }">{{ gridSeedLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="Flags" min-width="240">
+          <template #default="{ row }">{{ auditFlagsLabel(row.audit_flags) }}</template>
+        </el-table-column>
+        <el-table-column label="Suggested Action" min-width="320">
+          <template #default="{ row }">{{ row.suggested_action || "-" }}</template>
+        </el-table-column>
+        <el-table-column label="Last Trace" min-width="170">
+          <template #default="{ row }">{{ lastTraceLabel(row) }}</template>
+        </el-table-column>
+      </el-table>
+      <el-empty
+        v-else
+        description="No futures_grid trace checkpoints yet. Start a futures grid strategy to populate runtime profile and seed events."
+      />
+    </section>
+
+    <section v-if="metrics" class="aq-panel aq-fade-up">
+      <div class="aq-section-header">
+        <div>
           <h2>Audit Pressure</h2>
           <p class="aq-section-copy">
             Look at which control actions are failing most often and whether those failures are critical enough to warrant intervention.
@@ -150,36 +205,74 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import { ensureSession, getOpsMetrics } from "../api";
-
-type MetricsPayload = {
-  checked_at: string;
-  ws_connection_count: number;
-  ws_online_user_count: number;
-  strategy_runtime_counts: Record<string, number>;
-  strategy_process_count: number;
-  runtime_status_drift_count: number;
-  lighter_reconcile_status_counts: Record<string, number>;
-  lighter_reconcile_retry_due_count: number;
-  lighter_reconcile_retry_blocked_count: number;
-  lighter_pending_oldest_age_seconds: number | null;
-  total_audit_events_last_hour: number;
-  failed_audit_events_last_hour: number;
-  failed_audit_event_rate_last_hour: number;
-  critical_audit_events_last_hour: number;
-  audit_action_counts_last_hour: Record<string, number>;
-};
+import { ensureSession, getOpsFuturesGridAudit, getOpsMetrics, type OpsFuturesGridRuntimeAudit, type OpsMetricsPayload } from "../api";
 
 const router = useRouter();
 const loading = ref(false);
 const errorMessage = ref("");
-const metrics = ref<MetricsPayload | null>(null);
+const metrics = ref<OpsMetricsPayload | null>(null);
+const futuresAudit = ref<OpsFuturesGridRuntimeAudit[]>([]);
 let refreshTimer: number | undefined;
 
 function mapCounts(record: Record<string, number>) {
   return Object.entries(record || {})
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value);
+}
+
+function runtimeStatusType(status: string | null) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "running") return "success";
+  if (normalized === "failed") return "danger";
+  if (normalized === "starting" || normalized === "stopping") return "warning";
+  return "info";
+}
+
+function actionLevelType(level: OpsFuturesGridRuntimeAudit["action_level"]) {
+  if (level === "critical") return "danger";
+  if (level === "warning") return "warning";
+  return "success";
+}
+
+function directionLabel(direction: OpsFuturesGridRuntimeAudit["direction"]) {
+  if (direction === "long") return "Long only";
+  if (direction === "short") return "Short only";
+  if (direction === "neutral") return "Neutral";
+  return "-";
+}
+
+function leverageLabel(leverage: number | null) {
+  return leverage && leverage > 0 ? `${leverage}x` : "-";
+}
+
+function gridSeedLabel(row: OpsFuturesGridRuntimeAudit) {
+  if (row.planned_order_count == null) {
+    return "-";
+  }
+  const buy = row.buy_levels ?? 0;
+  const sell = row.sell_levels ?? 0;
+  return `${row.planned_order_count} (${buy}B / ${sell}S)`;
+}
+
+function auditFlagsLabel(flags: string[]) {
+  if (!flags?.length) {
+    return "-";
+  }
+  return flags.join(", ");
+}
+
+function lastTraceLabel(row: OpsFuturesGridRuntimeAudit) {
+  return row.profile_timestamp || row.grid_seeded_timestamp || row.last_heartbeat || "-";
+}
+
+function openStrategy(row: OpsFuturesGridRuntimeAudit) {
+  const query: Record<string, string> = {
+    strategy_id: String(row.strategy_id)
+  };
+  if (row.runtime_ref) {
+    query.runtime_ref = row.runtime_ref;
+  }
+  router.push({ path: "/strategies", query });
 }
 
 async function reload() {
@@ -194,6 +287,12 @@ async function reload() {
   errorMessage.value = "";
   try {
     metrics.value = await getOpsMetrics();
+    try {
+      const audit = await getOpsFuturesGridAudit(30);
+      futuresAudit.value = audit.runtimes || [];
+    } catch {
+      futuresAudit.value = [];
+    }
   } catch (error: any) {
     errorMessage.value = error?.response?.data?.detail || "Failed to load ops metrics.";
   } finally {
